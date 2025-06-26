@@ -1,180 +1,215 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { HabitType } from '@prisma/client';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
-import { startOfMonth, endOfMonth, eachDayOfInterval, format, parseISO, differenceInDays } from 'date-fns';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+'use client';
+
+import React, { useEffect, useState, useMemo } from 'react';
+import { HabitDisplay } from '@/app/habits/page'; // Path to HabitDisplay interface
+import { HabitType, HabitGoalType } from '@prisma/client';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import { format, parseISO, startOfDay, subDays, addDays } from 'date-fns';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Button } from '@/components/ui/button';
 
-
-interface LogData {
-  id: string;
-  habitId: string;
-  habitName: string;
-  habitType: HabitType;
-  date: string; // YYYY-MM-DD
-  isSuccess: boolean | null;
-  count: number;
+// Data structure from GET /api/habits/[habitId]/analytics
+interface AnalyticsDataPoint {
+  date: string; // 'YYYY-MM-DD'
+  logged: boolean;
+  streak: number;
 }
 
 interface HabitStatsPanelProps {
-  activeHabitType: HabitType; // To filter logs by GOOD or BAD
+  habitsInCurrentView: HabitDisplay[]; // For the dropdown selector
+  activeFilterType: HabitType; // To pre-filter dropdown or show context title
 }
 
-const COLORS_PIE = ['#00C49F', '#FF8042', '#FFBB28']; // Green for success, Orange for fail/null for BAD, Yellow for null for GOOD
-
-// Helper to generate days of a month for heatmap
-const getDaysInMonth = (year: number, month: number) // month is 0-indexed
-: Date[] => {
-  const firstDay = startOfMonth(new Date(year, month));
-  const lastDay = endOfMonth(new Date(year, month));
-  return eachDayOfInterval({ start: firstDay, end: lastDay });
-};
-
-// Heatmap specific color scale
-const getHeatmapColor = (count: number) => {
-  if (count === 0) return 'bg-muted/30 dark:bg-muted/20'; // No activity
-  if (count === 1) return 'bg-green-200 dark:bg-green-900';
-  if (count === 2) return 'bg-green-400 dark:bg-green-700';
-  if (count >= 3) return 'bg-green-600 dark:bg-green-500';
-  return 'bg-gray-200 dark:bg-gray-700'; // Fallback
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-background/80 backdrop-blur-sm p-2 border rounded shadow-lg text-sm">
+        <p className="font-semibold">{`Date: ${label}`}</p>
+        <p style={{ color: payload[0].stroke }}>{`Streak: ${payload[0].value}`}</p>
+        <p>{`Logged: ${payload[0].payload.logged ? 'Yes' : 'No'}`}</p>
+      </div>
+    );
+  }
+  return null;
 };
 
 
-const HabitStatsPanel: React.FC<HabitStatsPanelProps> = ({ activeHabitType }) => {
-  const [logs, setLogs] = useState<LogData[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+const HabitStatsPanel: React.FC<HabitStatsPanelProps> = ({ habitsInCurrentView, activeFilterType }) => {
+  const [selectedHabitId, setSelectedHabitId] = useState<string | null>(null);
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsDataPoint[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [analyticsRange, setAnalyticsRange] = useState<number>(30); // Default to 30 days
 
-  const [currentMonthDate, setCurrentMonthDate] = useState(new Date());
-  const currentYear = currentMonthDate.getFullYear();
-  const currentMonth = currentMonthDate.getMonth(); // 0-indexed
+  const availableHabitsForSelection = useMemo(() => {
+    return habitsInCurrentView.filter(h => !h.archived && h.type === activeFilterType);
+  }, [habitsInCurrentView, activeFilterType]);
 
   useEffect(() => {
-    const fetchLogs = async () => {
+    // Auto-select first habit if list changes or initially
+    if (availableHabitsForSelection.length > 0 && !selectedHabitId) {
+      setSelectedHabitId(availableHabitsForSelection[0].id);
+    } else if (availableHabitsForSelection.length === 0) {
+        setSelectedHabitId(null); // Clear selection if no habits match
+    }
+  }, [availableHabitsForSelection, selectedHabitId]);
+
+
+  useEffect(() => {
+    if (!selectedHabitId) {
+      setAnalyticsData([]); // Clear data if no habit is selected
+      return;
+    }
+
+    const fetchAnalytics = async () => {
       setIsLoading(true);
       setError(null);
       try {
-        // Fetch logs for the current month for heatmap, and maybe last 30/90 days for pie chart
-        const monthStart = format(startOfMonth(currentMonthDate), 'yyyy-MM-dd');
-        const monthEnd = format(endOfMonth(currentMonthDate), 'yyyy-MM-dd');
-
-        const response = await fetch(`/api/habits/logs?habitType=${activeHabitType}&startDate=${monthStart}&endDate=${monthEnd}`);
+        const response = await fetch(`/api/habits/${selectedHabitId}/analytics?range=${analyticsRange}`);
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(errorData.error || 'Failed to fetch habit logs');
+          throw new Error(errorData.error || `Failed to fetch analytics for habit ${selectedHabitId}`);
         }
-        const data: LogData[] = await response.json();
-        setLogs(data);
+        const data: AnalyticsDataPoint[] = await response.json();
+        // Ensure data is sorted by date for charts if API doesn't guarantee it (API should guarantee it)
+        data.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        setAnalyticsData(data);
       } catch (err: any) {
         setError(err.message);
-        console.error("Error fetching logs for stats panel:", err);
+        console.error("Error fetching habit analytics:", err);
       } finally {
         setIsLoading(false);
       }
     };
 
-    fetchLogs();
-  }, [activeHabitType, currentMonthDate]);
+    fetchAnalytics();
+  }, [selectedHabitId, analyticsRange]);
 
-  // Prepare data for Pie Chart (Overall Success Rate for the fetched logs period)
-  const pieChartData = logs.reduce((acc, log) => {
-    if (log.isSuccess === true) {
-      acc[0].value += 1; // Success
-    } else if (log.isSuccess === false) {
-      acc[1].value += 1; // Failure
-    } else { // isSuccess is null
-      // For GOOD habits, null might be treated as neutral or pending. For BAD, as neutral.
-      // Let's count them separately for now.
-      acc[2].value +=1;
-    }
-    return acc;
-  }, [
-    { name: 'Successful Logs', value: 0 },
-    { name: 'Failed Logs', value: 0 },
-    { name: 'Other Logs (e.g. neutral)', value: 0 },
-  ]).filter(item => item.value > 0);
+  const selectedHabitDetails = useMemo(() => {
+    return habitsInCurrentView.find(h => h.id === selectedHabitId);
+  }, [selectedHabitId, habitsInCurrentView]);
 
+  // Prepare data for Activity Grid (simplified heatmap)
+  // It will show 'analyticsRange' number of days.
+  // We need to create a grid of 'analyticsRange' cells.
+  const activityGridData = useMemo(() => {
+    if (!analyticsData.length) return [];
 
-  // Prepare data for Heatmap
-  const daysInMonth = getDaysInMonth(currentYear, currentMonth);
-  const heatmapData = daysInMonth.map(dayDate => {
-    const dayStr = format(dayDate, 'yyyy-MM-dd');
-    const logsOnDay = logs.filter(log => log.date === dayStr && log.isSuccess); // Count successful logs
-    return {
-      date: dayStr,
-      dayOfMonth: format(dayDate, 'd'),
-      count: logsOnDay.length, // Number of successful logs on this day for the active habit type
-    };
-  });
+    // The analyticsData is already for the range, sorted by date.
+    // We just need to format it for the grid.
+    // For a 7-column grid, we might need to pad if it's not a multiple of 7.
+    // Or, just display them sequentially.
+    return analyticsData.map(day => ({
+        date: day.date,
+        dayOfMonth: format(parseISO(day.date), 'd'), // parseISO to convert string to Date
+        logged: day.logged,
+    }));
+  }, [analyticsData]);
 
-  const weekDays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const firstDayOfMonthOffset = startOfMonth(new Date(currentYear, currentMonth)).getDay(); // 0 for Sunday, 1 for Monday...
-
-
-  if (isLoading) return <div className="p-4 text-center text-muted-foreground">Loading stats...</div>;
-  if (error) return <div className="p-4 text-center text-red-500">Error: {error}</div>;
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-xl">Habit Insights ({activeHabitType === HabitType.GOOD ? "Trackers" : "Breakers"})</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-8">
-        {/* Monthly Activity Heatmap */}
-        <div>
-          <div className="flex justify-between items-center mb-2">
-            <h4 className="text-md font-semibold">Monthly Activity Heatmap</h4>
-            {/* Month Navigation */}
-            <div className="flex items-center space-x-2">
-                <Button size="sm" variant="outline" onClick={() => setCurrentMonthDate(prev => new Date(prev.getFullYear(), prev.getMonth() -1, 1))}>Prev</Button>
-                <span className="text-sm font-medium">{format(currentMonthDate, 'MMMM yyyy')}</span>
-                <Button size="sm" variant="outline" onClick={() => setCurrentMonthDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}>Next</Button>
-            </div>
+        <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+          <CardTitle className="text-lg sm:text-xl">
+            Individual Habit Insights
+            {selectedHabitDetails && <span className="text-primary ml-2">({selectedHabitDetails.name})</span>}
+          </CardTitle>
+          <div className="w-full sm:w-auto min-w-[200px]">
+            <Select
+              value={selectedHabitId || ''}
+              onValueChange={(value) => setSelectedHabitId(value)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select a habit..." />
+              </SelectTrigger>
+              <SelectContent>
+                {availableHabitsForSelection.length > 0 ? (
+                  availableHabitsForSelection.map(habit => (
+                    <SelectItem key={habit.id} value={habit.id}>
+                      {habit.name}
+                    </SelectItem>
+                  ))
+                ) : (
+                  <div className="p-2 text-sm text-muted-foreground">No habits of type '{activeFilterType}' found.</div>
+                )}
+              </SelectContent>
+            </Select>
           </div>
-          <div className="grid grid-cols-7 gap-1 text-center text-xs">
-            {weekDays.map(day => <div key={day} className="font-medium text-muted-foreground">{day}</div>)}
-            {Array.from({ length: firstDayOfMonthOffset }).map((_, i) => <div key={`empty-${i}`} />)}
-            {heatmapData.map(day => (
-              <div key={day.date} title={`${day.date}: ${day.count} successful logs`}
-                   className={`w-full aspect-square rounded-sm flex items-center justify-center ${getHeatmapColor(day.count)} transition-colors`}>
-                {day.dayOfMonth}
-              </div>
-            ))}
-          </div>
-           <p className="text-xs text-muted-foreground mt-2">Cells colored by number of successful logs for {activeHabitType === HabitType.GOOD ? "trackers" : "breakers"} on that day.</p>
         </div>
-
-        {/* Overall Success Rate Pie Chart */}
-        {logs.length > 0 && pieChartData.length > 0 && (
-          <div>
-            <h4 className="text-md font-semibold mb-2">Overall Log Status (Current Month)</h4>
-            <ResponsiveContainer width="100%" height={250}>
-              <PieChart>
-                <Pie data={pieChartData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} labelLine={false}
-                     label={({ cx, cy, midAngle, innerRadius, outerRadius, percent, index }) => {
-                        const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
-                        const x = cx + radius * Math.cos(-midAngle * (Math.PI / 180));
-                        const y = cy + radius * Math.sin(-midAngle * (Math.PI / 180));
-                        return ( (percent * 100) > 5 ? // Only show label if percent is > 5%
-                          <text x={x} y={y} fill="white" textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central" fontSize="12px">
-                            {`${(percent * 100).toFixed(0)}%`}
-                          </text> : null
-                        );
-                      }}
-                >
-                  {pieChartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS_PIE[index % COLORS_PIE.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value, name) => [`${value} logs`, name]}/>
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
+        {selectedHabitDetails && (
+             <CardDescription>
+                Displaying analytics for "{selectedHabitDetails.name}" (Type: {selectedHabitDetails.type}, Goal: {selectedHabitDetails.goalType}).
+                Current Streak: {selectedHabitDetails.currentStreak}. Data for last {analyticsRange} days.
+            </CardDescription>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {!selectedHabitId && (
+          <div className="text-center py-10 text-muted-foreground">
+            <p>Please select a habit to view its statistics.</p>
           </div>
         )}
-         {logs.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No log data available for the selected period to display charts.</p>}
+        {isLoading && selectedHabitId && <div className="text-center py-10 text-muted-foreground">Loading analytics...</div>}
+        {error && selectedHabitId && <div className="text-center py-10 text-red-500">Error: {error}</div>}
+
+        {selectedHabitId && !isLoading && !error && analyticsData.length === 0 && (
+             <div className="text-center py-10 text-muted-foreground">
+                <p>No analytics data found for the selected habit in the last {analyticsRange} days.</p>
+            </div>
+        )}
+
+        {selectedHabitId && !isLoading && !error && analyticsData.length > 0 && (
+          <>
+            {/* Streak Over Time Line Chart */}
+            <section>
+              <h3 className="text-md font-semibold mb-2">Streak Over Time (Last {analyticsRange} days)</h3>
+              <ResponsiveContainer width="100%" height={250}>
+                <LineChart data={analyticsData} margin={{ top: 5, right: 20, left: -20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2}/>
+                  <XAxis dataKey="date"
+                         tickFormatter={(tick) => format(parseISO(tick), 'MMM d')}
+                         fontSize={10}
+                         padding={{ left: 10, right: 10 }}
+                         />
+                  <YAxis allowDecimals={false} domain={['dataMin', 'dataMax']} fontSize={10}/>
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend wrapperStyle={{fontSize: "12px"}} />
+                  <Line type="monotone" dataKey="streak" stroke="#8884d8" strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 5 }} name="Streak Count" />
+                </LineChart>
+              </ResponsiveContainer>
+            </section>
+
+            {/* Activity Grid */}
+            <section>
+              <h3 className="text-md font-semibold mb-2">Daily Activity (Last {analyticsRange} days)</h3>
+              <div className="grid grid-cols-7 gap-1.5 text-xs text-center">
+                {/* Optionally add weekday headers here if aligning to a calendar month start */}
+                {activityGridData.map((day, index) => (
+                  <div key={index}
+                       title={`${day.date}: ${day.logged ? 'Logged Successfully' : 'Not Logged (or Unsuccessful)'}`}
+                       className={`p-1.5 sm:p-2 rounded aspect-square flex items-center justify-center transition-colors text-foreground/70
+                                   ${day.logged ? 'bg-green-500/80 hover:bg-green-500' : 'bg-muted/50 hover:bg-muted'}`}
+                  >
+                    {day.dayOfMonth}
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground mt-2 text-right">Green indicates a successfully logged day.</p>
+            </section>
+
+            <div className="flex justify-center space-x-2 pt-4 border-t">
+                {[30, 60, 90].map(r => (
+                    <Button key={r} variant={analyticsRange === r ? "default" : "outline"} size="sm" onClick={() => setAnalyticsRange(r)}>
+                        Last {r} Days
+                    </Button>
+                ))}
+            </div>
+          </>
+        )}
       </CardContent>
     </Card>
   );
