@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import HabitFormModal, { HabitFormData } from '@/components/habits/HabitFormModal';
 import HabitCard from '@/components/habits/HabitCard';
+import QuickLogBar from '@/components/habits/QuickLogBar'; // Already here, but good to confirm
+import HabitStatsPanel from '@/components/habits/HabitStatsPanel'; // Import HabitStatsPanel
 import { HabitType, HabitGoalType } from '@prisma/client';
 import { Button } from '@/components/ui/button';
 import { PlusCircle, Archive, Eye, EyeOff } from 'lucide-react';
@@ -239,9 +241,12 @@ export default function HabitsPage() {
         </div>
       </div>
 
-      <div className="my-6 p-4 bg-card border rounded-lg">
-        <h2 className="text-xl font-semibold mb-2">Habit Insights Panel (Placeholder)</h2>
-        <p className="text-sm text-muted-foreground">Graphs and detailed stats will appear here.</p>
+      <div className="my-6"> {/* Container for the stats panel */}
+        <HabitStatsPanel
+          // Pass only habits relevant to the active tab for the selector inside the panel
+          habitsInCurrentView={filteredHabits}
+          activeFilterType={activeTab} // Pass current tab filter (GOOD/BAD)
+        />
       </div>
 
       {/* Habits Display */}
