@@ -1,3 +1,7 @@
+import { prisma } from '@/lib/db'; // For DB operations within applySkillDecay
+import { Skill } from '@prisma/client'; // Assuming Skill is your Prisma model
+import { differenceInDays, subDays } from 'date-fns';
+
 export interface SkillLevelInfo {
   currentLevel: number;
   currentXp: number;
@@ -129,3 +133,130 @@ export function getSkillColorClass(level: number): string {
   if (level < 1) return levelColorClasses[0]; // Use index 0 for level 0 or less
   return levelColorClasses[Math.min(level, levelColorClasses.length -1)]; // Use level directly as index (1-based) up to array length
 }
+
+
+// --- Skill Decay Utilities ---
+
+// Define a type that includes the new decay fields, assuming they are on the Prisma Skill model
+// We use the Prisma generated 'Skill' type and augment it conceptually for the function signature.
+// The actual 'Skill' type from Prisma should be generated to include these after schema migration.
+export type SkillWithDecayFields = Skill & {
+  decayRate?: number | null;
+  decayIntervalDays?: number | null;
+  decayEnabled?: boolean;
+  lastDecayCheck?: Date | null;
+  // Prisma's Skill type already has currentLevel, currentXp, userId, id, createdAt
+};
+
+/**
+ * Applies skill decay if applicable and updates the skill in the database.
+ * Returns the potentially updated skill.
+ * For MVP, decay reduces XP but does not change the skill's level. Minimum XP is 0.
+ */
+export const applySkillDecay = async (skill: SkillWithDecayFields): Promise<SkillWithDecayFields> => {
+  if (
+    !skill.decayEnabled ||
+    skill.decayRate === null || skill.decayRate === undefined || skill.decayRate <= 0 ||
+    skill.decayIntervalDays === null || skill.decayIntervalDays === undefined || skill.decayIntervalDays <= 0
+  ) {
+    return skill; // Decay not enabled or configured properly
+  }
+
+  const now = new Date();
+  let effectiveLastCheck = skill.lastDecayCheck || skill.createdAt; // Use createdAt if never checked
+
+  // Ensure lastCheck is not in the future (sanity check, or if skill was just created)
+  if (effectiveLastCheck > now) {
+    // This can happen if skill.createdAt is slightly in the future due to clock sync issues or if lastDecayCheck was manually set to future.
+    // Or if the skill was just created in the same transaction/moment.
+    // In this case, no decay calculation is needed yet.
+    // However, if lastDecayCheck was null and createdAt is recent, we might still want to set lastDecayCheck to now.
+    if (!skill.lastDecayCheck && skill.createdAt >= subDays(now,1) ) { // if created very recently and no lastDecayCheck
+        try {
+            const updatedSkill = await prisma.skill.update({
+                where: { id: skill.id },
+                data: { lastDecayCheck: now },
+            });
+            return updatedSkill as SkillWithDecayFields;
+        } catch(error) {
+             console.error(`Failed to update lastDecayCheck for new skill ${skill.id}:`, error);
+        }
+    }
+    return skill;
+  }
+
+  const daysSinceLastEffectiveCheck = differenceInDays(now, effectiveLastCheck);
+
+  if (daysSinceLastEffectiveCheck < skill.decayIntervalDays) {
+    return skill; // Not enough time passed for another decay interval
+  }
+
+  const numberOfIntervalsPassed = Math.floor(daysSinceLastEffectiveCheck / skill.decayIntervalDays);
+
+  if (numberOfIntervalsPassed <= 0) {
+    // This case should ideally be caught by the check above, but as a safeguard.
+    // It might also mean lastDecayCheck needs an update to 'now' if it's significantly in the past but just under one interval.
+    // To prevent repeated checks for the same non-qualifying period, we can update lastDecayCheck.
+     try {
+        const updatedSkill = await prisma.skill.update({
+            where: { id: skill.id },
+            data: { lastDecayCheck: now },
+        });
+        return updatedSkill as SkillWithDecayFields;
+    } catch(error){
+        console.error(`Failed to update lastDecayCheck for skill ${skill.id} (no decay applied this time):`, error);
+        return skill; // Return original on error
+    }
+  }
+
+  const totalDecayAmount = numberOfIntervalsPassed * skill.decayRate;
+  const originalXp = skill.currentXp; // Assuming currentXp is part of SkillWithDecayFields via Prisma's Skill
+  let newXp = originalXp - totalDecayAmount;
+
+  if (newXp < 0) {
+    newXp = 0;
+  }
+
+  // Only update if XP actually changes.
+  if (newXp !== originalXp) {
+    try {
+      const updatedSkill = await prisma.skill.update({
+        where: { id: skill.id },
+        data: {
+          currentXp: newXp,
+          lastDecayCheck: now,
+        },
+      });
+
+      // Log the decay event
+      // Assuming 'userId', 'currentLevel' are available on updatedSkill (from Prisma Skill type)
+      await prisma.skillProgressLog.create({
+        data: {
+            skillId: updatedSkill.id,
+            userId: updatedSkill.userId,
+            xpChange: newXp - originalXp, // This will be negative
+            newXp: updatedSkill.currentXp,
+            newLevel: updatedSkill.currentLevel, // Level doesn't change in this MVP decay model
+            changeReason: "DECAY",
+        }
+      });
+      return updatedSkill as SkillWithDecayFields;
+    } catch (error) {
+      console.error(`Failed to apply decay and update skill ${skill.id}:`, error);
+      return skill; // Return original skill if update fails
+    }
+  } else {
+    // Even if XP didn't change (e.g., was already 0, or decay amount was too small to change int XP),
+    // update lastDecayCheck to prevent re-evaluating the same past period.
+    try {
+        const skillAfterCheckUpdate = await prisma.skill.update({
+            where: {id: skill.id},
+            data: {lastDecayCheck: now }
+        });
+        return skillAfterCheckUpdate as SkillWithDecayFields;
+    } catch(error) {
+        console.error(`Failed to update lastDecayCheck for skill ${skill.id} (no XP change):`, error);
+        return skill;
+    }
+  }
+};

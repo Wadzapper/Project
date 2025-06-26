@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/db';
+import { applySkillDecay, SkillWithDecayFields, calculateTargetXpForLevel } from '@/lib/skillUtils';
 
 // Basic validation (can be expanded or use Zod)
 interface SkillInput {
@@ -28,11 +29,16 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const skills = await prisma.skill.findMany({
+    const skillsFromDb = await prisma.skill.findMany({
       where: { userId: session.user.id },
       orderBy: { createdAt: 'desc' },
     });
-    return NextResponse.json(skills);
+
+    const skillsWithDecayApplied = await Promise.all(
+      skillsFromDb.map(skill => applySkillDecay(skill as SkillWithDecayFields))
+    );
+
+    return NextResponse.json(skillsWithDecayApplied);
   } catch (error) {
     console.error('Error fetching skills:', error);
     return NextResponse.json({ error: 'Failed to fetch skills' }, { status: 500 });
@@ -68,7 +74,12 @@ export async function POST(req: NextRequest) {
         description: description || null,
         currentLevel: currentLevel || 1,
         currentXp: currentXp || 0,
-        targetXpForNextLevel: targetXpForNextLevel || 100,
+        targetXpForNextLevel: targetXpForNextLevel || calculateTargetXpForLevel(currentLevel || 1),
+        // Initialize decay fields
+        decayEnabled: false,
+        decayRate: null,
+        decayIntervalDays: null,
+        lastDecayCheck: null,
         // colorCode can be set here or updated later based on logic
       },
     });

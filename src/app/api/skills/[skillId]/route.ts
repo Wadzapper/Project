@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/db';
-import { QuestStatus, UserAchievement, QuestDependencyType } from '@prisma/client'; // Added UserAchievement for return type & QuestDependencyType
+import { QuestStatus, UserAchievement, QuestDependencyType, Skill } from '@prisma/client'; // Added Skill
 import { evaluateQuestCompletion } from '@/lib/questUtils';
 import { checkAndUnlockAchievements } from '@/lib/achievementUtils';
+import { applySkillDecay, SkillWithDecayFields } from '@/lib/skillUtils'; // Import for decay
 
 interface SkillUpdateInput {
   name?: string;
@@ -12,11 +13,30 @@ interface SkillUpdateInput {
   currentXp?: number;
   targetXpForNextLevel?: number;
   colorCode?: string;
+  // Decay fields for PATCH
+  decayRate?: number | null;
+  decayIntervalDays?: number | null;
+  decayEnabled?: boolean;
+  // lastDecayCheck is not typically user-settable via PATCH
 }
 
 function validateSkillUpdateInput(data: any): { isValid: boolean; errors?: any; data?: SkillUpdateInput } {
   if (data.name !== undefined && (typeof data.name !== 'string' || data.name.trim().length === 0)) {
     return { isValid: false, errors: { name: 'Name cannot be empty if provided.' } };
+  }
+  if (data.decayRate !== undefined && data.decayRate !== null && (typeof data.decayRate !== 'number' || data.decayRate < 0)) {
+    return { isValid: false, errors: { decayRate: 'Decay rate must be a non-negative number or null.' } };
+  }
+  if (data.decayIntervalDays !== undefined && data.decayIntervalDays !== null && (typeof data.decayIntervalDays !== 'number' || data.decayIntervalDays <= 0)) {
+    return { isValid: false, errors: { decayIntervalDays: 'Decay interval days must be a positive number or null.' } };
+  }
+  if (data.decayEnabled !== undefined && typeof data.decayEnabled !== 'boolean') {
+     return { isValid: false, errors: { decayEnabled: 'Decay enabled must be a boolean.' } };
+  }
+  // Add more complex validation if needed: e.g., if decayEnabled, rate and interval should be set.
+  if (data.decayEnabled === true && (data.decayRate === null || data.decayRate === undefined || data.decayIntervalDays === null || data.decayIntervalDays === undefined )) {
+    // If enabling decay, but rate or interval are not being set (or are null), this might be an issue
+    // For now, this validation is basic. A more robust system might require rate/interval if enabling.
   }
   return { isValid: true, data: data as SkillUpdateInput };
 }
@@ -31,12 +51,14 @@ export async function GET(
   }
   const { skillId } = params;
   try {
-    const skill = await prisma.skill.findUnique({
+    let skill = await prisma.skill.findUnique({ // Make skill mutable
       where: { id: skillId, userId: session.user.id },
     });
     if (!skill) {
       return NextResponse.json({ error: 'Skill not found or access denied' }, { status: 404 });
     }
+    // Apply decay logic before returning
+    skill = await applySkillDecay(skill as SkillWithDecayFields);
     return NextResponse.json(skill);
   } catch (error) {
     console.error(`Error fetching skill ${skillId}:`, error);
