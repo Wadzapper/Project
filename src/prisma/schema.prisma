@@ -1,0 +1,416 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- Enums (Global Scope) ---
+enum QuestStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum QuestType {
+  MANUAL
+  SKILL_XP
+  STREAK
+  DATE_TARGET
+}
+
+enum QuestDependencyType {
+  SKILL_LEVEL_REACHED
+  SKILL_XP_GAINED_TOTAL
+  SKILL_XP_GAINED_RELATIVE
+  QUEST_COMPLETED_STREAK
+  COMPLETE_BY_DATE
+  MANUAL_CHECK
+}
+
+enum AchievementUnlockCriterionType {
+  SKILL_LEVEL_REACHED
+  QUESTS_COMPLETED_TOTAL
+  QUESTS_OF_TYPE_COMPLETED
+  SKILLS_MASTERED_COUNT
+  LOGIN_STREAK_DAYS
+}
+
+enum HabitType {
+  GOOD
+  BAD
+}
+
+enum HabitGoalType {
+  DAILY
+  WEEKLY
+  TIMES_PER_PERIOD
+}
+
+enum WorkoutType {
+  STRENGTH
+  CARDIO
+  MIXED
+}
+
+// --- Models ---
+model User {
+  id                 String             @id @default(cuid())
+  name               String?
+  email              String?            @unique
+  emailVerified      DateTime?
+  image              String?
+  passwordHash       String?
+  accounts           Account[]
+  sessions           Session[]
+  skills             Skill[]
+  skillTrees         SkillTree[]
+  quests             Quest[]
+  userAchievements   UserAchievement[]
+  questLogs          QuestLog[]
+  skillProgressLogs  SkillProgressLog[]
+  journalEntries     JournalEntry[]
+  dailyRatings       DailyRating[]
+  habits             Habit[]
+  habitLogs          HabitLog[]
+  personalPhilosophy String?            @db.Text
+  workoutSessions    WorkoutSession[]
+  sleepLogs          SleepLog[]
+  bodyMetrics        BodyMetric[]
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Skill {
+  id                   String             @id @default(cuid())
+  userId               String
+  name                 String
+  description          String?
+  currentXp            Int                @default(0)
+  currentLevel         Int                @default(1)
+  targetXpForNextLevel Int                @default(100)
+  colorCode            String?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skillTreeNodes       SkillTreeNode[]
+  questDependencies    QuestDependency[]
+  skillProgressLogs    SkillProgressLog[]
+
+  @@index([userId])
+}
+
+model SkillTree {
+  id          String          @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nodes       SkillTreeNode[]
+
+  @@index([userId])
+}
+
+model SkillTreeNode {
+  id           String          @id @default(cuid())
+  skillTreeId  String
+  skillId      String
+  parentNodeId String?
+  positionX    Int             @default(0)
+  positionY    Int             @default(0)
+  metadata     Json?
+  skillTree    SkillTree       @relation(fields: [skillTreeId], references: [id], onDelete: Cascade)
+  skill        Skill           @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  parent       SkillTreeNode?  @relation("SkillTreeBranch", fields: [parentNodeId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children     SkillTreeNode[] @relation("SkillTreeBranch")
+
+  @@index([skillTreeId])
+  @@index([skillId])
+  @@index([parentNodeId])
+}
+
+model SkillProgressLog {
+  id        String   @id @default(cuid())
+  skillId   String
+  userId    String
+  xpChange  Int
+  source    String?
+  createdAt DateTime @default(now())
+  skill     Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([skillId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model Quest {
+  id           String            @id @default(cuid())
+  userId       String
+  name         String
+  description  String?
+  status       QuestStatus       @default(PENDING)
+  type         QuestType
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  completedAt  DateTime?
+  failedAt     DateTime?
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dependencies QuestDependency[]
+  logs         QuestLog[]
+
+  @@index([userId, status])
+  @@index([userId, type])
+}
+
+model QuestDependency {
+  id               String              @id @default(cuid())
+  questId          String
+  type             QuestDependencyType
+  description      String?
+  skillId          String?
+  initialSkillXp   Int?
+  targetSkillLevel Int?
+  targetSkillXp    Int?
+  targetDate       DateTime?
+  currentProgress  Int?
+  isCompleted      Boolean             @default(false)
+  quest            Quest               @relation(fields: [questId], references: [id], onDelete: Cascade)
+  skill            Skill?              @relation(fields: [skillId], references: [id], onDelete: SetNull)
+
+  @@index([questId])
+  @@index([skillId])
+}
+
+model Achievement {
+  id                              String                         @id @default(cuid())
+  name                            String                         @unique
+  description                     String
+  icon                            String?
+  pointsAwarded                   Int                            @default(0)
+  criteriaType                    AchievementUnlockCriterionType
+  criteriaTargetSkillId           String?
+  criteriaTargetSkillLevel        Int?
+  criteriaTargetQuestCount        Int?
+  criteriaTargetQuestType         QuestType?
+  criteriaTargetSkillMasteryCount Int?
+  createdAt                       DateTime                       @default(now())
+  updatedAt                       DateTime                       @updatedAt
+  unlockedBy                      UserAchievement[]
+}
+
+model UserAchievement {
+  id              String      @id @default(cuid())
+  userId          String
+  achievementId   String
+  unlockedAt      DateTime    @default(now())
+  progressDetails Json?
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement     Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+  @@index([userId])
+  @@index([achievementId])
+}
+
+model QuestLog {
+  id        String      @id @default(cuid())
+  questId   String
+  userId    String
+  status    QuestStatus
+  note      String?     @db.Text
+  createdAt DateTime    @default(now())
+  quest     Quest       @relation(fields: [questId], references: [id], onDelete: Cascade)
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([questId])
+  @@index([userId])
+}
+
+model JournalEntry {
+  id                   String       @id @default(cuid())
+  userId               String
+  user                 User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date                 DateTime
+  title                String
+  content              String       @db.Text
+  tags                 String[]     @default([])
+  linkedSkillIds       String[]     @default([])
+  linkedQuestIds       String[]     @default([])
+  linkedAchievementIds String[]     @default([])
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  dailyRating          DailyRating?
+
+  @@index([userId, date])
+  @@index([userId])
+}
+
+model DailyRating {
+  id             String        @id @default(cuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date           DateTime
+  productivity   Int
+  mood           Int
+  energy         Int
+  stress         Int?
+  focus          Int?
+  notes          String?       @db.Text
+  journalEntryId String?       @unique
+  journalEntry   JournalEntry? @relation(fields: [journalEntryId], references: [id], onDelete: SetNull)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([userId, date])
+  @@index([userId, date])
+}
+
+model Habit {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  type         HabitType
+  goalType     HabitGoalType
+  frequency    Int
+  periodInDays Int?
+  tags         String[]      @default([])
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  archived     Boolean       @default(false)
+  logs         HabitLog[]
+
+  @@index([userId])
+  @@index([userId, type])
+}
+
+model HabitLog {
+  id        String   @id @default(cuid())
+  habitId   String
+  habit     Habit    @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date      DateTime @default(now())
+  note      String?  @db.Text
+  isSuccess Boolean?
+  count     Int      @default(1)
+
+  @@index([habitId, date])
+  @@index([userId, date])
+}
+
+model WorkoutSession {
+  id           String          @id @default(cuid())
+  userId       String
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date         DateTime
+  type         WorkoutType
+  notes        String?         @db.Text
+  exerciseLogs ExerciseEntry[]
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([userId, date])
+}
+
+model ExerciseEntry {
+  id              String         @id @default(cuid())
+  sessionId       String
+  session         WorkoutSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  name            String
+  notes           String?        @db.Text
+  sets            SetLog[]
+  durationMinutes Int?
+  distanceKm      Float?
+  caloriesBurned  Int?
+  order           Int?
+
+  @@index([sessionId])
+}
+
+model SetLog {
+  id              String        @id @default(cuid())
+  exerciseEntryId String
+  exerciseEntry   ExerciseEntry @relation(fields: [exerciseEntryId], references: [id], onDelete: Cascade)
+  setNumber       Int
+  reps            Int
+  weightKg        Float?
+  restSeconds     Int?
+  notes           String?
+
+  @@index([exerciseEntryId])
+}
+
+model SleepLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date      DateTime
+  hours     Float
+  quality   Int
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, date])
+  @@index([userId, date])
+}
+
+model BodyMetric {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date      DateTime
+  weightKg  Float? // Made optional as per prompt example, was Float
+  bodyFat   Float?
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt // Added updatedAt
+
+  @@index([userId, date])
+}
