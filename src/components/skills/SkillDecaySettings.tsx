@@ -22,6 +22,16 @@ const SkillDecaySettings: React.FC<SkillDecaySettingsProps> = ({ skill, onSettin
   const [decayIntervalDays, setDecayIntervalDays] = useState<number | string>(skill.decayIntervalDays || '');
   const [isLoading, setIsLoading] = useState(false);
 
+  // For formatting dates
+  const formatDate = (dateString: string | Date | null | undefined): string => {
+    if (!dateString) return 'N/A';
+    try {
+      return new Date(dateString).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric' });
+    } catch (e) {
+      return 'Invalid Date';
+    }
+  };
+
   useEffect(() => {
     setDecayEnabled(!!skill.decayEnabled);
     setDecayRate(skill.decayRate || '');
@@ -123,16 +133,26 @@ const SkillDecaySettings: React.FC<SkillDecaySettingsProps> = ({ skill, onSettin
               type="number"
               value={decayIntervalDays}
               onChange={(e) => setDecayIntervalDays(e.target.value)}
-              placeholder="e.g., 7"
+              placeholder="e.g., 7 for weekly"
               min="1"
               step="1"
               disabled={isLoading || !decayEnabled}
             />
           </div>
+          {decayEnabled && parseFloat(String(decayRate)) > 0 && parseInt(String(decayIntervalDays), 10) > 0 && (
+            <p className="text-xs text-muted-foreground italic">
+              This skill will lose {decayRate} XP every {decayIntervalDays} day(s) if not updated.
+            </p>
+          )}
         </>
       )}
+
+      <div className="text-xs text-muted-foreground pt-2 mt-2 border-t">
+        Last Decay Check: {formatDate(skill.lastDecayCheck)}
+      </div>
+
       <div>
-        <Button type="submit" disabled={isLoading}>
+        <Button type="submit" disabled={isLoading} className="mt-2">
           {isLoading ? 'Saving...' : 'Save Decay Settings'}
         </Button>
       </div>
