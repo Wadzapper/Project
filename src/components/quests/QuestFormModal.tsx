@@ -4,40 +4,62 @@ import { useEffect, useState, FormEvent } from 'react';
 import { QuestType, QuestDependencyType, QuestStatus } from '@prisma/client'; // Import enums
 import { Skill } from '@/app/skills/page'; // Reuse Skill type
 
+import { Label } from '@/components/ui/label'; // For Tags
+import { Checkbox } from '@/components/ui/checkbox'; // For Tags
+import toast from 'react-hot-toast'; // For loading tags error
+
 // --- Types for Form Data ---
 export interface QuestDependencyFormData {
-  id?: string; // For existing dependencies during edit
-  tempId?: string; // For new dependencies during create/edit before saving
+  id?: string;
+  tempId?: string;
   type: QuestDependencyType;
   description?: string;
   skillId?: string | null;
   targetSkillLevel?: number | null;
   targetSkillXp?: number | null;
-  targetDate?: string | null; // Store as ISO string, convert to Date on submit
-  // currentProgress?: number; // Usually system-managed, but could be set for MANUAL_CHECK
-  isCompleted?: boolean; // For MANUAL_CHECK
+  targetDate?: string | null;
+  isCompleted?: boolean;
 }
 
 export interface QuestFormData {
-  id?: string; // For edit mode
-  name: string;
+  id?: string;
+  name: string; // Should align with 'title' from Prisma model if that's primary
+  title?: string; // Allow both for flexibility, prefer title
   description: string;
   type: QuestType;
-  status?: QuestStatus; // For edit mode, if status is directly editable
+  status?: QuestStatus;
   dependencies: QuestDependencyFormData[];
+  tagIds: string[]; // Added for tags
+}
+
+// For fetching and displaying available tags
+interface Tag {
+  id: string;
+  name: string;
+  color?: string | null;
 }
 
 // --- Component Props ---
 interface QuestFormModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (questData: QuestFormData) => Promise<void>;
-  initialData?: QuestFormData | null;
+  onSubmit: (questData: QuestFormData) => Promise<void>; // onSubmit expects QuestFormData with tagIds
+  initialData?: Omit<QuestFormData, 'tagIds' | 'name'> & { name?: string; title?: string; tags?: Tag[] }; // initialData comes with populated Tag objects
   mode: 'create' | 'edit';
-  userSkills: Skill[]; // To populate skill dropdowns
+  userSkills: Skill[];
   isLoading?: boolean;
   error?: string | null;
 }
+
+const defaultFormData: QuestFormData = {
+  name: '', // Will be mapped to title
+  title: '',
+  description: '',
+  type: QuestType.MANUAL, // Default type
+  dependencies: [],
+  tagIds: [],
+  status: QuestStatus.PENDING,
+};
 
 export default function QuestFormModal({
   isOpen,
@@ -49,20 +71,53 @@ export default function QuestFormModal({
   isLoading = false,
   error = null,
 }: QuestFormModalProps) {
-  const [formData, setFormData] = useState<QuestFormData>({
-    name: '', description: '', type: QuestType.MANUAL, dependencies: [],
+  const [formData, setFormData] = useState<QuestFormData>(() => {
+    if (mode === 'edit' && initialData) {
+      return {
+        ...defaultFormData,
+        ...initialData,
+        name: initialData.title || initialData.name || '', // Prefer title
+        title: initialData.title || initialData.name || '',
+        dependencies: initialData.dependencies?.map(d => ({...d, tempId: d.id || crypto.randomUUID()})) || [],
+        tagIds: initialData.tags?.map(tag => tag.id) || [],
+      };
+    }
+    return defaultFormData;
   });
+
+  const [availableTags, setAvailableTags] = useState<Tag[]>([]);
+  const [isLoadingTags, setIsLoadingTags] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       if (mode === 'edit' && initialData) {
         setFormData({
+          ...defaultFormData,
           ...initialData,
-          dependencies: initialData.dependencies.map(d => ({...d, tempId: d.id || crypto.randomUUID()}))
+          name: initialData.title || initialData.name || '',
+          title: initialData.title || initialData.name || '',
+          dependencies: initialData.dependencies?.map(d => ({...d, tempId: d.id || crypto.randomUUID()})) || [],
+          tagIds: initialData.tags?.map(tag => tag.id) || [],
         });
-      } else { // Create mode or no initial data
-        setFormData({ name: '', description: '', type: QuestType.MANUAL, dependencies: [] });
+      } else {
+        setFormData(defaultFormData);
       }
+      // Fetch available tags
+      const fetchTags = async () => {
+        setIsLoadingTags(true);
+        try {
+          const response = await fetch('/api/tags');
+          if (!response.ok) throw new Error('Failed to fetch tags');
+          const tagsData: Tag[] = await response.json();
+          setAvailableTags(tagsData);
+        } catch (err) {
+          console.error("Error fetching tags for quest modal:", err);
+          toast.error("Could not load tags for selection.");
+        } finally {
+          setIsLoadingTags(false);
+        }
+      };
+      fetchTags();
     }
   }, [isOpen, initialData, mode]);
 
@@ -81,23 +136,31 @@ export default function QuestFormModal({
   };
 
   const handleDependencyTypeChange = (tempId: string, newType: QuestDependencyType) => {
-     setFormData(prev => ({
+    setFormData(prev => ({
       ...prev,
       dependencies: prev.dependencies.map(dep =>
         dep.tempId === tempId ?
         {
-            // Reset fields when type changes, keep description if any
             tempId: dep.tempId,
-            description: dep.description,
+            description: dep.description, // Keep description
             type: newType,
             skillId: null,
             targetSkillLevel: null,
             targetSkillXp: null,
             targetDate: null,
-            isCompleted: false,
+            isCompleted: false, // Reset completion status
         } : dep
       ),
     }));
+  };
+
+  const handleTagSelectionChange = (tagId: string, selected: boolean) => {
+    setFormData(prev => {
+      const newTagIds = selected
+        ? [...prev.tagIds, tagId]
+        : prev.tagIds.filter(id => id !== tagId);
+      return { ...prev, tagIds: newTagIds };
+    });
   };
 
   const addDependency = () => {
@@ -119,19 +182,23 @@ export default function QuestFormModal({
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!formData.name.trim()) { alert('Quest name is required.'); return; }
-    // Add more validation as needed
+    if (!formData.title?.trim() && !formData.name?.trim()) {
+        toast.error('Quest name/title is required.'); return;
+    }
+    // API expects 'title', so ensure it's set from 'name' if 'title' is empty
+    const finalTitle = formData.title?.trim() || formData.name?.trim();
 
-    // Convert targetDate strings to Date objects or ensure API handles ISO strings
-    const processedData = {
+    const processedData: QuestFormData = {
         ...formData,
+        title: finalTitle, // Ensure title is populated
+        name: finalTitle!, // Also set name for consistency if form used it
         dependencies: formData.dependencies.map(dep => ({
             ...dep,
             targetDate: dep.targetDate ? new Date(dep.targetDate).toISOString() : null,
-            // Ensure numeric fields are numbers
             targetSkillLevel: dep.targetSkillLevel ? Number(dep.targetSkillLevel) : null,
             targetSkillXp: dep.targetSkillXp ? Number(dep.targetSkillXp) : null,
-        }))
+        })),
+        // tagIds is already part of formData as string[]
     };
     await onSubmit(processedData);
   };
@@ -214,12 +281,12 @@ export default function QuestFormModal({
 
           {/* Dependencies Section */}
           <div className="space-y-4">
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white">Dependencies</h3>
+            <h3 className="text-md font-semibold text-gray-900 dark:text-white">Dependencies</h3>
             {formData.dependencies.map((dep, index) => (
               <div key={dep.tempId} className="p-3 border border-gray-200 rounded-md dark:border-gray-700 space-y-3">
                 <div className="flex justify-between items-center">
-                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Dependency #{index + 1}</p>
-                    <button type="button" onClick={() => removeDependency(dep.tempId!)} className="text-xs text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300">Remove</button>
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Dependency #{index + 1}</p>
+                    <button type="button" onClick={() => removeDependency(dep.tempId!)} className="text-xs text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300">Remove</button>
                 </div>
                 <div className="grid grid-cols-1 gap-y-3 gap-x-4 sm:grid-cols-2">
                     <div className="col-span-2 sm:col-span-1">
@@ -245,20 +312,45 @@ export default function QuestFormModal({
               </div>
             ))}
             <button type="button" onClick={addDependency}
-                    className="px-3 py-1.5 text-xs font-medium text-indigo-700 bg-indigo-100 rounded-md hover:bg-indigo-200 dark:bg-indigo-800 dark:text-indigo-200 dark:hover:bg-indigo-700">
+                    className="px-3 py-1.5 text-xs font-medium text-indigo-600 bg-indigo-100 rounded-md hover:bg-indigo-200 dark:bg-indigo-700 dark:text-indigo-100 dark:hover:bg-indigo-600">
               + Add Dependency
             </button>
           </div>
 
+          {/* Tags Section */}
+          <div>
+            <Label className="text-md font-semibold text-gray-900 dark:text-white">Tags</Label>
+            {isLoadingTags && <p className="text-xs text-muted-foreground mt-1">Loading tags...</p>}
+            {!isLoadingTags && availableTags.length === 0 && <p className="text-xs text-muted-foreground mt-1">No tags available. Create tags in Tag Management.</p>}
+            {!isLoadingTags && availableTags.length > 0 && (
+              <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2 p-2 border rounded-md max-h-40 overflow-y-auto">
+                {availableTags.map(tag => (
+                  <div key={tag.id} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`quest-tag-${tag.id}`}
+                      checked={formData.tagIds.includes(tag.id)}
+                      onCheckedChange={(checked) => handleTagSelectionChange(tag.id, !!checked)}
+                      disabled={isLoading}
+                    />
+                    <Label htmlFor={`quest-tag-${tag.id}`} className="text-sm font-normal flex items-center cursor-pointer">
+                      {tag.color && <span className="w-3 h-3 rounded-sm mr-1.5 inline-block border" style={{backgroundColor: tag.color}}></span>}
+                      {tag.name}
+                    </Label>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+
           <div className="pt-6 space-x-3 text-right border-t border-gray-200 dark:border-gray-700">
-            <button type="button" onClick={onClose} disabled={isLoading}
-                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600">
+             {/* Using shadcn Button component */}
+            <Button type="button" variant="outline" onClick={onClose} disabled={isLoading}>
               Cancel
-            </button>
-            <button type="submit" disabled={isLoading}
-                    className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 dark:bg-indigo-500 dark:hover:bg-indigo-600">
+            </Button>
+            <Button type="submit" disabled={isLoading}>
               {isLoading ? 'Saving...' : (mode === 'create' ? 'Create Quest' : 'Save Changes')}
-            </button>
+            </Button>
           </div>
         </form>
       </div>

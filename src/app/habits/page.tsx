@@ -11,7 +11,14 @@ import { HabitType, HabitGoalType } from '@prisma/client';
 import { Button } from '@/components/ui/button';
 import { PlusCircle, Archive, Eye, EyeOff } from 'lucide-react';
 
-// Matches the HabitCardProps and includes what the API returns
+// Define Tag type as expected from API (and used by HabitFormModal)
+interface Tag {
+  id: string;
+  name: string;
+  color?: string | null;
+}
+
+// HabitDisplay now expects tags as an array of Tag objects
 export interface HabitDisplay {
   id: string;
   name: string;
@@ -20,17 +27,23 @@ export interface HabitDisplay {
   goalType: HabitGoalType;
   frequency: number;
   periodInDays?: number | null;
-  tags: string[];
+  tags: Tag[]; // Changed from string[] to Tag[]
   archived: boolean;
   createdAt: string;
   updatedAt: string;
-  currentStreak: number;    // Now directly from API
-  successCount: number;   // Now directly from API
-  totalLogCount: number;  // Now directly from API
-  lastLoggedDate?: string | null; // From API
+  currentStreak: number;
+  successCount: number;
+  totalLogCount: number;
+  lastLoggedDate?: string | null;
   loggedToday?: boolean;
-  // successRate will be calculated on the client in this component
+  successRate?: number; // This is calculated client-side
 }
+
+// HabitFormModal initialData prop expects tags as Tag[] for edit mode,
+// but its internal HabitFormData uses tagIds: string[].
+// The onSubmit prop for HabitFormModal expects HabitFormData (which has tagIds).
+type HabitFormModalInitialData = Omit<HabitFormData, 'tagIds'> & { tags?: Tag[] };
+
 
 export default function HabitsPage() {
   const [allHabits, setAllHabits] = useState<HabitDisplay[]>([]);
@@ -39,9 +52,10 @@ export default function HabitsPage() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
-  const [currentHabitForModal, setCurrentHabitForModal] = useState<HabitFormData | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false); // For modal submissions
-  const [isLogging, setIsLogging] = useState(false); // For quick log bar and card logs
+  // currentHabitForModal needs to align with HabitFormModal's initialData prop type
+  const [currentHabitForModal, setCurrentHabitForModal] = useState<HabitFormModalInitialData | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLogging, setIsLogging] = useState(false);
 
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<HabitType>(HabitType.GOOD);
@@ -85,19 +99,21 @@ export default function HabitsPage() {
         type: habit.type,
         goalType: habit.goalType,
         frequency: habit.frequency,
-        periodInDays: habit.periodInDays || 1, // Default to 1 if null
-        tags: habit.tags.join(', '), // Convert array to comma-separated string for form
+        periodInDays: habit.periodInDays || 1,
+        // Pass the actual Tag objects for initialData, HabitFormModal will map to IDs
+        tags: habit.tags,
         archived: habit.archived,
       });
     } else {
-      setCurrentHabitForModal({ // Default values for create mode
+      // For create mode, pass empty tags array or undefined
+      setCurrentHabitForModal({
         name: '',
         description: '',
-        type: activeTab, // Default to current tab type
-        goalType: HabitGoalType.STREAK, // Default goal type
-        frequency: 1, // Default frequency
-        periodInDays: 1, // Default period (daily)
-        tags: '',
+        type: activeTab,
+        goalType: HabitGoalType.STREAK,
+        frequency: 1,
+        periodInDays: 1,
+        tags: [], // Or undefined, HabitFormModal will default tagIds to []
         archived: false,
       });
     }
@@ -109,15 +125,16 @@ export default function HabitsPage() {
     setCurrentHabitForModal(null);
   };
 
+  // HabitFormModal's onSubmit now provides HabitFormData which includes tagIds: string[]
   const handleSubmitModal = async (data: HabitFormData) => {
     setIsSubmitting(true);
-    const url = modalMode === 'create' ? '/api/habits' : `/api/habits/${data.id}`;
+    const url = modalMode === 'create' ? `/api/habits` : `/api/habits/${data.id}`;
     const method = modalMode === 'create' ? 'POST' : 'PATCH';
 
-    const payload = {
-      ...data,
-      tags: data.tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0),
-    };
+    // The 'data' from HabitFormModal already has 'tagIds' correctly formatted as string[]
+    // No need to split comma-separated string here anymore.
+    // The payload sent to API should be 'data' itself.
+    const payload = data;
 
     try {
       const response = await fetch(url, {

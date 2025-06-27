@@ -10,7 +10,7 @@ interface HabitUpdateInput {
   goalType?: HabitGoalType;
   frequency?: number;
   periodInDays?: number | null; // Allow unsetting if goalType changes
-  tags?: string[];
+  tagIds?: string[]; // Changed from tags: string[]
   archived?: boolean;
 }
 
@@ -31,16 +31,13 @@ function validateHabitUpdateInput(data: any): { isValid: boolean; errors?: any; 
   if (data.goalType === HabitGoalType.TIMES_PER_PERIOD &&
       (data.periodInDays === undefined || data.periodInDays === null || (typeof data.periodInDays === 'number' && data.periodInDays <=0))
      ) {
-      // If goalType is changing TO TIMES_PER_PERIOD, periodInDays becomes required (unless already set)
-      // If goalType is already TIMES_PER_PERIOD, periodInDays must be positive if provided
-      // This logic can be complex depending on how you want to handle partial updates.
-      // For now, if periodInDays is explicitly in payload for this type, it must be positive.
       if (data.periodInDays !== undefined && (data.periodInDays === null || (typeof data.periodInDays === 'number' && data.periodInDays <=0))) {
         return { isValid: false, errors: { periodInDays: 'Period (in days) must be positive for TIMES_PER_PERIOD goal type if provided.'}};
       }
   }
-  if (data.tags !== undefined && !Array.isArray(data.tags)) {
-    return { isValid: false, errors: { tags: 'Tags must be an array of strings.'}};
+  // Validate tagIds if provided
+  if (data.tagIds !== undefined && (!Array.isArray(data.tagIds) || !data.tagIds.every((id: any) => typeof id === 'string'))) {
+    return { isValid: false, errors: { tagIds: 'tagIds must be an array of strings.' } };
   }
   if (data.archived !== undefined && typeof data.archived !== 'boolean') {
     return { isValid: false, errors: { archived: 'Archived must be a boolean.'}};
@@ -57,10 +54,24 @@ export async function GET(req: NextRequest, { params }: { params: { habitId: str
   try {
     const habit = await prisma.habit.findUnique({
       where: { id: params.habitId, userId: session.user.id },
-      // include: { logs: { orderBy: { date: 'desc' }, take: 10 } } // Optionally include recent logs
+      include: { // Include tags when fetching a single habit
+        habitTags: {
+          select: {
+            tag: {
+              select: { id: true, name: true, color: true }
+            }
+          }
+        }
+      }
     });
     if (!habit) return NextResponse.json({ error: 'Habit not found' }, { status: 404 });
-    return NextResponse.json(habit);
+
+    const { habitTags, ...habitData } = habit;
+    const responseData = {
+      ...habitData,
+      tags: habitTags.map(ht => ht.tag) // Flatten to simple array of Tag objects
+    };
+    return NextResponse.json(responseData);
   } catch (error) {
     return NextResponse.json({ error: 'Failed to fetch habit' }, { status: 500 });
   }
@@ -80,23 +91,77 @@ export async function PATCH(req: NextRequest, { params }: { params: { habitId: s
     return NextResponse.json({ error: 'Invalid or empty input', details: validation.errors }, { status: 400 });
   }
 
-  const updateData = { ...validation.data };
-  // If goalType is changed away from TIMES_PER_PERIOD, nullify periodInDays
-  if (updateData.goalType && updateData.goalType !== HabitGoalType.TIMES_PER_PERIOD) {
-    updateData.periodInDays = null;
-  }
+  const { tagIds, ...otherUpdateData } = validation.data;
+  let updatePayload = { ...otherUpdateData };
 
+  // If goalType is changed away from TIMES_PER_PERIOD, nullify periodInDays
+  if (updatePayload.goalType && updatePayload.goalType !== HabitGoalType.TIMES_PER_PERIOD) {
+    updatePayload.periodInDays = null;
+  }
 
   try {
     const existingHabit = await prisma.habit.findUnique({ where: { id: params.habitId, userId: session.user.id }});
     if (!existingHabit) return NextResponse.json({ error: 'Habit not found or access denied' }, { status: 404 });
 
-    const updatedHabit = await prisma.habit.update({
-      where: { id: params.habitId },
-      data: updateData,
+    // Handle tag updates transactionally
+    await prisma.$transaction(async (tx) => {
+      // Update basic habit fields
+      const updatedHabit = await tx.habit.update({
+        where: { id: params.habitId },
+        data: updatePayload,
+      });
+
+      // If tagIds are provided, sync them
+      if (tagIds !== undefined) {
+        // Validate new tagIds belong to user
+        if (tagIds.length > 0) {
+            const tagsExistCount = await tx.tag.count({
+                where: { id: { in: tagIds }, userId: session.user!.id }
+            });
+            if (tagsExistCount !== tagIds.length) {
+                throw new Error('One or more provided tag IDs for update are invalid or do not belong to the user.');
+            }
+        }
+        // Delete existing tag associations
+        await tx.habitTag.deleteMany({
+          where: { habitId: params.habitId },
+        });
+        // Create new tag associations
+        if (tagIds.length > 0) {
+          await tx.habitTag.createMany({
+            data: tagIds.map(tagId => ({
+              habitId: params.habitId,
+              tagId: tagId,
+              assignedBy: session.user!.id!,
+            })),
+          });
+        }
+      }
+      // Return the updated habit with tags for the response
+      // This requires another fetch or careful construction. For now, we'll fetch.
     });
-    return NextResponse.json(updatedHabit);
-  } catch (error) {
+
+    // Refetch the habit with its updated tags to return in the response
+    const habitWithUpdatedTags = await prisma.habit.findUnique({
+        where: { id: params.habitId },
+        include: { habitTags: { include: { tag: true } } }
+    });
+     if (!habitWithUpdatedTags) throw new Error("Failed to refetch habit after update.");
+
+
+    const { habitTags: finalHabitTags, ...finalHabitData } = habitWithUpdatedTags;
+    const responseData = {
+      ...finalHabitData,
+      tags: finalHabitTags.map(ht => ht.tag)
+    };
+
+    return NextResponse.json(responseData);
+
+  } catch (error: any) {
+    console.error(`Error updating habit ${params.habitId}:`, error.message);
+    if (error.message.includes('tag IDs for update are invalid')) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json({ error: 'Failed to update habit' }, { status: 500 });
   }
 }

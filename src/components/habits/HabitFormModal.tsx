@@ -12,27 +12,34 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { X } from 'lucide-react';
 
 // This interface should align with the one in HabitsPage.tsx for initialData
+// AND the data structure expected by the API (now using tagIds)
 export interface HabitFormData {
   id?: string;
   name: string;
-  description: string; // Changed from description? to description
+  description: string;
   type: HabitType;
   goalType: HabitGoalType;
   frequency: number;
   periodInDays?: number | null;
-  tags: string; // Storing as comma-separated string in form state
-  archived: boolean; // Added archived state
+  tagIds: string[]; // Changed from tags: string to tagIds: string[]
+  archived: boolean;
+}
+
+// For fetching and displaying available tags
+interface Tag {
+  id: string;
+  name: string;
+  color?: string | null;
 }
 
 interface HabitFormModalProps {
   isOpen: boolean;
   onClose: () => void;
-  // onSubmit in HabitsPage.tsx expects tags as string[], so conversion will happen there or before calling it
-  onSubmit: (habitData: Omit<HabitFormData, 'tags'> & { tags: string[] }) => Promise<void>;
-  initialData?: HabitFormData | null; // This should come from HabitsPage.tsx with tags as string
+  onSubmit: (habitData: HabitFormData) => Promise<void>; // onSubmit now expects HabitFormData with tagIds
+  initialData?: Omit<HabitFormData, 'tagIds'> & { tags?: Tag[] }; // initialData might come with populated Tag objects
   mode: 'create' | 'edit';
   isLoading?: boolean;
-  error?: string | null; // For server-side errors passed back
+  error?: string | null;
 }
 
 const defaultFormData: HabitFormData = {
@@ -42,7 +49,7 @@ const defaultFormData: HabitFormData = {
   goalType: HabitGoalType.DAILY,
   frequency: 1,
   periodInDays: null,
-  tags: '',
+  tagIds: [], // Initialize as empty array
   archived: false,
 };
 
@@ -53,22 +60,53 @@ export default function HabitFormModal({
   initialData,
   mode,
   isLoading = false,
-  error = null, // Prop for displaying submission error
+  error = null,
 }: HabitFormModalProps) {
-  const [formData, setFormData] = useState<HabitFormData>(initialData || defaultFormData);
+  const [formData, setFormData] = useState<HabitFormData>(() => {
+    if (mode === 'edit' && initialData) {
+      return {
+        ...defaultFormData, // Ensure all fields are present
+        ...initialData,
+        tagIds: initialData.tags?.map(tag => tag.id) || [], // Map initial tags to tagIds
+        periodInDays: initialData.goalType === HabitGoalType.TIMES_PER_PERIOD ? initialData.periodInDays : null,
+      };
+    }
+    return defaultFormData;
+  });
+
+  const [availableTags, setAvailableTags] = useState<Tag[]>([]);
+  const [isLoadingTags, setIsLoadingTags] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
+      // Reset form data based on mode and initialData when modal opens or initialData changes
       if (mode === 'edit' && initialData) {
         setFormData({
+          ...defaultFormData,
           ...initialData,
-          // Ensure periodInDays is correctly nulled if not TIMES_PER_PERIOD
+          tagIds: initialData.tags?.map(tag => tag.id) || [],
           periodInDays: initialData.goalType === HabitGoalType.TIMES_PER_PERIOD ? initialData.periodInDays : null,
         });
       } else {
-        // For create mode, or if initialData is somehow null in edit mode
         setFormData(defaultFormData);
       }
+
+      // Fetch available tags
+      const fetchTags = async () => {
+        setIsLoadingTags(true);
+        try {
+          const response = await fetch('/api/tags');
+          if (!response.ok) throw new Error('Failed to fetch tags');
+          const tagsData: Tag[] = await response.json();
+          setAvailableTags(tagsData);
+        } catch (err) {
+          console.error("Error fetching tags for modal:", err);
+          toast.error("Could not load tags.");
+        } finally {
+          setIsLoadingTags(false);
+        }
+      };
+      fetchTags();
     }
   }, [isOpen, initialData, mode]);
 
@@ -84,7 +122,7 @@ export default function HabitFormModal({
     setFormData(prev => ({ ...prev, [name]: numValue !== null && isNaN(numValue) ? prev[name as keyof HabitFormData] : numValue }));
   };
 
-  const handleSelectChange = (name: keyof HabitFormData, value: string) => {
+  const handleSelectChange = (name: keyof Omit<HabitFormData, 'tagIds' | 'archived'>, value: string) => {
     setFormData(prev => {
       const updatedState = { ...prev, [name]: value };
       if (name === 'goalType' && value !== HabitGoalType.TIMES_PER_PERIOD) {
@@ -94,8 +132,17 @@ export default function HabitFormModal({
     });
   };
 
-  const handleCheckboxChange = (name: keyof HabitFormData, checked: boolean) => {
-    setFormData(prev => ({ ...prev, [name]: checked }));
+  const handleArchivedCheckboxChange = (checked: boolean) => {
+    setFormData(prev => ({ ...prev, archived: checked }));
+  };
+
+  const handleTagSelectionChange = (tagId: string, selected: boolean) => {
+    setFormData(prev => {
+      const newTagIds = selected
+        ? [...prev.tagIds, tagId]
+        : prev.tagIds.filter(id => id !== tagId);
+      return { ...prev, tagIds: newTagIds };
+    });
   };
 
   const handleSubmit = async (e: FormEvent) => {
@@ -106,16 +153,12 @@ export default function HabitFormModal({
         toast.error('Period (in days) is required and must be positive for "Times per period" goal type.'); return;
     }
 
-    // Convert tags string to array for submission, matching what HabitsPage.tsx expects
-    const tagsArray = formData.tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0);
-
-    const dataToSubmit = {
+    // onSubmit now expects HabitFormData directly which includes tagIds: string[]
+    await onSubmit({
         ...formData,
-        tags: tagsArray,
         frequency: Number(formData.frequency) || 1,
         periodInDays: formData.goalType === HabitGoalType.TIMES_PER_PERIOD ? (Number(formData.periodInDays) || null) : null,
-    };
-    await onSubmit(dataToSubmit);
+    });
   };
 
   if (!isOpen) return null;
@@ -152,7 +195,7 @@ export default function HabitFormModal({
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <Label htmlFor="type">Habit Type</Label>
-              <Select name="type" value={formData.type} onValueChange={(value) => handleSelectChange('type', value)} disabled={isLoading}>
+              <Select name="type" value={formData.type} onValueChange={(value) => handleSelectChange('type' as any, value)} disabled={isLoading}>
                 <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
                 <SelectContent>
                   {Object.values(HabitType).map(type => <SelectItem key={type} value={type}>{type.charAt(0) + type.slice(1).toLowerCase()}</SelectItem>)}
@@ -161,7 +204,7 @@ export default function HabitFormModal({
             </div>
             <div>
               <Label htmlFor="goalType">Goal Type</Label>
-              <Select name="goalType" value={formData.goalType} onValueChange={(value) => handleSelectChange('goalType', value)} disabled={isLoading}>
+              <Select name="goalType" value={formData.goalType} onValueChange={(value) => handleSelectChange('goalType' as any, value)} disabled={isLoading}>
                 <SelectTrigger><SelectValue placeholder="Select goal type" /></SelectTrigger>
                 <SelectContent>
                   {Object.values(HabitGoalType).map(type => <SelectItem key={type} value={type}>{getGoalTypeLabel(type)}</SelectItem>)}
@@ -183,13 +226,34 @@ export default function HabitFormModal({
             )}
           </div>
 
+          {/* Tag Selection UI */}
           <div>
-            <Label htmlFor="tags">Tags (comma-separated)</Label>
-            <Input type="text" name="tags" id="tags" value={formData.tags} onChange={handleInputChange} disabled={isLoading} placeholder="e.g. health, productivity, morning" />
+            <Label>Tags</Label>
+            {isLoadingTags && <p className="text-xs text-muted-foreground">Loading tags...</p>}
+            {!isLoadingTags && availableTags.length === 0 && <p className="text-xs text-muted-foreground">No tags available. Create some in Tag Management.</p>}
+            {!isLoadingTags && availableTags.length > 0 && (
+              <div className="mt-1 space-y-2 p-2 border rounded-md max-h-32 overflow-y-auto">
+                {availableTags.map(tag => (
+                  <div key={tag.id} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`tag-${tag.id}`}
+                      checked={formData.tagIds.includes(tag.id)}
+                      onCheckedChange={(checked) => handleTagSelectionChange(tag.id, !!checked)}
+                      disabled={isLoading}
+                    />
+                    <Label htmlFor={`tag-${tag.id}`} className="text-sm font-normal flex items-center">
+                      {tag.color && <span className="w-3 h-3 rounded-sm mr-2 inline-block border" style={{backgroundColor: tag.color}}></span>}
+                      {tag.name}
+                    </Label>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
+
           <div className="flex items-center space-x-2 pt-2">
-            <Checkbox id="archived" name="archived" checked={formData.archived} onCheckedChange={(checked) => handleCheckboxChange('archived', !!checked)} disabled={isLoading} />
+            <Checkbox id="archived" checked={formData.archived} onCheckedChange={(checked) => handleArchivedCheckboxChange(!!checked)} disabled={isLoading} />
             <Label htmlFor="archived" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
               Archived
             </Label>

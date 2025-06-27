@@ -8,6 +8,9 @@ import { checkAndUnlockAchievements } from '@/lib/achievementUtils';
 interface QuestUpdateInput {
   name?: string;
   description?: string;
+  name?: string; // This should probably be 'title' to match Prisma model
+  title?: string;
+  description?: string;
   status?: QuestStatus;
   type?: QuestType;
   dependencyUpdates?: Array<{
@@ -15,19 +18,31 @@ interface QuestUpdateInput {
     isCompleted?: boolean;
     currentProgress?: number;
   }>;
+  tagIds?: string[]; // Added for tags
 }
 
 function validateQuestUpdateInput(data: any): { isValid: boolean; errors?: any; data?: QuestUpdateInput } {
-  if (data.name !== undefined && (typeof data.name !== 'string' || data.name.trim().length === 0)) {
-    return { isValid: false, errors: { name: 'Name cannot be empty.' } };
+  const { name, title, ...rest } = data; // Handle potential name/title ambiguity
+  const effectiveTitle = title || name;
+
+  if (effectiveTitle !== undefined && (typeof effectiveTitle !== 'string' || effectiveTitle.trim().length === 0)) {
+    return { isValid: false, errors: { title: 'Title cannot be empty.' } };
   }
-  if (data.status !== undefined && !Object.values(QuestStatus).includes(data.status as QuestStatus)) {
+  if (rest.status !== undefined && !Object.values(QuestStatus).includes(rest.status as QuestStatus)) {
     return { isValid: false, errors: { status: 'Invalid status.' } };
   }
-  if (data.type !== undefined && !Object.values(QuestType).includes(data.type as QuestType)) {
+  if (rest.type !== undefined && !Object.values(QuestType).includes(rest.type as QuestType)) {
     return { isValid: false, errors: { type: 'Invalid type.' } };
   }
-  return { isValid: true, data: data as QuestUpdateInput };
+  if (rest.tagIds !== undefined && (!Array.isArray(rest.tagIds) || !rest.tagIds.every((id: any) => typeof id === 'string'))) {
+    return { isValid: false, errors: { tagIds: 'tagIds must be an array of strings.' } };
+  }
+  // Reconstruct data with effectiveTitle if name was used
+  const validatedData = { ...rest, title: effectiveTitle };
+  if (name && !title) validatedData.title = name; // Prefer title, but accept name
+  if (name !== undefined) delete (validatedData as any).name; // Remove 'name' if it existed to avoid conflict with 'title'
+
+  return { isValid: true, data: validatedData as QuestUpdateInput };
 }
 
 export async function GET(
@@ -42,12 +57,27 @@ export async function GET(
   try {
     const quest = await prisma.quest.findUnique({
       where: { id: questId, userId: session.user.id },
-      include: { dependencies: { include: { skill: { select: { id: true, name: true } } } } },
+      include: {
+        dependencies: { include: { skill: { select: { id: true, name: true } } } },
+        questTags: { // Include linked tags
+          select: {
+            tag: {
+              select: { id: true, name: true, color: true }
+            }
+          }
+        }
+      },
     });
     if (!quest) {
       return NextResponse.json({ error: 'Quest not found or access denied' }, { status: 404 });
     }
-    return NextResponse.json(quest);
+
+    const { questTags, ...questData } = quest;
+    const responseData = {
+      ...questData,
+      tags: questTags.map(qt => qt.tag)
+    };
+    return NextResponse.json(responseData);
   } catch (error) {
     console.error(`Error fetching quest ${questId}:`, error);
     return NextResponse.json({ error: 'Failed to fetch quest' }, { status: 500 });
@@ -72,49 +102,59 @@ export async function PATCH(
   if (!validation.isValid || !validation.data) {
     return NextResponse.json({ error: 'Invalid input', details: validation.errors }, { status: 400 });
   }
-  const { name, description, status, type, dependencyUpdates } = validation.data;
+  const { tagIds, dependencyUpdates, ...otherUpdateData } = validation.data; // Separate tagIds
 
   try {
     const existingQuest = await prisma.quest.findUnique({
       where: { id: questId, userId: session.user.id },
-      include: { dependencies: true } // include dependencies for comparison later
+      include: { dependencies: true }
     });
     if (!existingQuest) {
       return NextResponse.json({ error: 'Quest not found or access denied' }, { status: 404 });
     }
 
     const transactionResult = await prisma.$transaction(async (tx) => {
-      let questToUpdate = { ...existingQuest }; // Work with a mutable copy
+      let questToUpdate = { ...existingQuest };
 
-      const questUpdatePayload: Prisma.QuestUpdateInput = {}; // Use Prisma type for safety
-      if (name !== undefined) questUpdatePayload.name = name;
-      if (description !== undefined) questUpdatePayload.description = description;
-      if (type !== undefined) questUpdatePayload.type = type;
-      if (status !== undefined) {
-        questUpdatePayload.status = status;
-        if (status === QuestStatus.COMPLETED && !existingQuest.completedAt) questUpdatePayload.completedAt = new Date();
-        else if (status === QuestStatus.FAILED && !existingQuest.failedAt) questUpdatePayload.failedAt = new Date();
-        else if (status === QuestStatus.PENDING || status === QuestStatus.IN_PROGRESS) {
+      const questUpdatePayload: Prisma.QuestUpdateInput = {};
+      if (otherUpdateData.title !== undefined) questUpdatePayload.title = otherUpdateData.title;
+      if (otherUpdateData.description !== undefined) questUpdatePayload.description = otherUpdateData.description;
+      if (otherUpdateData.type !== undefined) questUpdatePayload.type = otherUpdateData.type;
+      if (otherUpdateData.status !== undefined) {
+        questUpdatePayload.status = otherUpdateData.status;
+        if (otherUpdateData.status === QuestStatus.COMPLETED && !existingQuest.completedAt) questUpdatePayload.completedAt = new Date();
+        else if (otherUpdateData.status === QuestStatus.FAILED && !existingQuest.failedAt) questUpdatePayload.failedAt = new Date();
+        else if (otherUpdateData.status === QuestStatus.PENDING || otherUpdateData.status === QuestStatus.IN_PROGRESS) {
           questUpdatePayload.completedAt = null; questUpdatePayload.failedAt = null;
         }
       }
 
       if (Object.keys(questUpdatePayload).length > 0) {
-        questToUpdate = await tx.quest.update({
+        const updatedQuestPartial = await tx.quest.update({
           where: { id: questId }, data: questUpdatePayload,
           include: { dependencies: { include: { skill: true } } }
         });
+        questToUpdate = { ...questToUpdate, ...updatedQuestPartial}; // Merge basic field updates
         if (questUpdatePayload.status && questUpdatePayload.status !== existingQuest.status) {
             await tx.questLog.create({
                 data: { questId, userId: session.user!.id, statusChange: `MANUAL_STATUS_TO_${questUpdatePayload.status}`, loggedAt: new Date() }
             });
         }
-      } else {
-        // Fetch full dependencies if not already updated
-        const currentQuestWithDeps = await tx.quest.findUnique({ where: {id: questId}, include: {dependencies: {include: {skill: true}}}});
-        if (!currentQuestWithDeps) throw new Error("Quest disappeared during transaction"); // Should not happen
-        questToUpdate = currentQuestWithDeps;
       }
+      // If only tags or dependencies are changing, questToUpdate remains existingQuest for eval
+      // Re-fetch with full includes if only deps/tags changed to ensure eval gets latest
+      if (Object.keys(questUpdatePayload).length === 0 && (dependencyUpdates || tagIds !== undefined)) {
+         const currentQuestWithDepsAndTags = await tx.quest.findUnique({
+            where: {id: questId},
+            include: {
+                dependencies: {include: {skill: true}},
+                questTags: {include: {tag: true}}
+            }
+        });
+        if (!currentQuestWithDepsAndTags) throw new Error("Quest disappeared during transaction");
+        questToUpdate = currentQuestWithDepsAndTags;
+      }
+
 
       let manualDepsChanged = false;
       if (dependencyUpdates && dependencyUpdates.length > 0) {
@@ -171,12 +211,55 @@ export async function PATCH(
         newlyUnlockedAchievements = await checkAndUnlockAchievements(tx, session.user!.id, "QUEST_COMPLETED", { quest: finalQuestState as any });
       }
 
-      return { updatedQuest: finalQuestState, unlockedAchievements: newlyUnlockedAchievements };
+      // Handle tagIds sync if provided
+      if (tagIds !== undefined) {
+        if (tagIds.length > 0) {
+            const tagsExistCount = await tx.tag.count({
+                where: { id: { in: tagIds }, userId: session.user!.id }
+            });
+            if (tagsExistCount !== tagIds.length) {
+                throw new Error('One or more provided tag IDs for update are invalid or do not belong to the user.');
+            }
+        }
+        await tx.questTag.deleteMany({ where: { questId: questId } });
+        if (tagIds.length > 0) {
+          await tx.questTag.createMany({
+            data: tagIds.map(tagId => ({
+              questId: questId,
+              tagId: tagId,
+              assignedBy: session.user!.id!,
+            })),
+          });
+        }
+      }
+
+      // Refetch the final quest state with all includes for the response
+      const finalQuestWithAllDetails = await tx.quest.findUnique({
+        where: { id: questId },
+        include: {
+            dependencies: { include: { skill: true } },
+            questTags: { include: { tag: true } }
+        }
+      });
+      if (!finalQuestWithAllDetails) throw new Error("Failed to refetch final quest state.");
+
+      return { updatedQuest: finalQuestWithAllDetails, unlockedAchievements: newlyUnlockedAchievements };
     });
 
-    return NextResponse.json(transactionResult);
+    // Map to desired response structure (flatten tags)
+    const { questTags: finalQuestTags, ...finalQuestData } = transactionResult.updatedQuest;
+    const responseData = {
+        ...finalQuestData,
+        tags: finalQuestTags.map(qt => qt.tag),
+        unlockedAchievements: transactionResult.unlockedAchievements
+    };
+
+    return NextResponse.json(responseData);
   } catch (error: any) {
     console.error(`Error updating quest ${questId}:`, error);
+    if (error.message.includes('tag IDs for update are invalid')) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json({ error: error.message || 'Failed to update quest' }, { status: 500 });
   }
 }

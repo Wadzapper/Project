@@ -1,28 +1,27 @@
+// Summary: Client component for toggling between light and dark themes.
+// Uses next-themes hook.
+// TODO: Consider more elaborate icons or animations for theme transition indication.
+
 'use client';
 
+import * as React from 'react';
 import { useTheme } from 'next-themes';
-import { useEffect, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Moon, Sun } from 'lucide-react';
 
-export function ThemeToggle() {
-  const [mounted, setMounted] = useState(false);
-  const { theme, setTheme } = useTheme();
-
-import { Button } from '@/components/ui/button'; // Import shadcn Button
-import { Moon, Sun } from 'lucide-react'; // Import lucide-react icons
-
-export function ThemeToggle() {
-  const [mounted, setMounted] = useState(false);
-  const { theme, setTheme, resolvedTheme } = useTheme(); // Use resolvedTheme
+export function ThemeToggleButton() {
+  const { theme, setTheme, resolvedTheme } = useTheme();
+  const [mounted, setMounted] = React.useState(false);
 
   // useEffect only runs on the client, so now we can show the UI
-  useEffect(() => {
+  React.useEffect(() => {
     setMounted(true);
   }, []);
 
   if (!mounted) {
-    // Render a placeholder or null until mounted to avoid hydration mismatch
-    // Using a div with size similar to the Button component
-    return <div className="w-9 h-9" />;
+    // Render a placeholder or null on the server and during initial client mount
+    // to avoid hydration mismatch if theme is system-derived.
+    return <div className="w-9 h-9" />; // Placeholder with same size as button
   }
 
   const currentTheme = theme === 'system' ? resolvedTheme : theme;

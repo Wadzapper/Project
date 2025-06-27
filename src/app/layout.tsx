@@ -36,10 +36,19 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
+          {/* Animated Backgrounds Wrapper */}
+          <div className="sunray-bg"></div>
+          <div className="starfield-bg">
+            <div className="stars-layer1"></div>
+            <div className="stars-layer2"></div>
+            <div className="stars-layer3"></div>
+          </div>
+
           <SessionProvider>
             <Toaster position="top-center" reverseOrder={false} /> {/* Add Toaster here */}
             <Navbar />
-            <main className="pt-16">
+            {/* Add relative and z-0 to main content if background is fixed and behind */}
+            <main className="pt-16 relative z-0">
               {children}
             </main>
           </SessionProvider>

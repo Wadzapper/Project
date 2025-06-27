@@ -3,10 +3,16 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import QuestFormModal, { QuestFormData, QuestDependencyFormData } from '@/components/quests/QuestFormModal';
-import { Skill } from '@/app/skills/page';
-import { QuestStatus, QuestType, QuestDependencyType, UserAchievement as PrismaUserAchievement } from '@prisma/client';
+import { Skill } from '@/app/skills/page'; // Skill type for dropdown
+import { QuestStatus, QuestType, QuestDependencyType, UserAchievement as PrismaUserAchievement, Tag as PrismaTag } from '@prisma/client'; // Added PrismaTag
 import ProgressBar from '@/components/ui/ProgressBar';
-import toast from 'react-hot-toast'; // Import toast
+import toast from 'react-hot-toast';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"; // For new filters
+import { Checkbox } from "@/components/ui/checkbox"; // For tag multiselect
+import { Label } from "@/components/ui/label"; // For tag multiselect
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"; // For tag multiselect
+import { Button } from '@/components/ui/button'; // Already imported but ensure it's available for new buttons
+import { Filter, XCircle } from 'lucide-react';
 
 // Define UserAchievement with nested Achievement details for toast
 interface UserAchievementWithDetails extends PrismaUserAchievement {
@@ -17,14 +23,23 @@ interface UserAchievementWithDetails extends PrismaUserAchievement {
 }
 
 
-export type QuestDisplay = {
+// Local Tag interface, should match what API returns for Quest.tags
+interface Tag {
   id: string;
   name: string;
+  color?: string | null;
+}
+
+export type QuestDisplay = {
+  id: string;
+  // name: string; // API now returns 'title' primarily
+  title: string; // Use 'title' as the primary display name field
   description: string | null;
   status: QuestStatus;
   type: QuestType;
   createdAt: string;
   dependencies: QuestDependencyFormData[];
+  tags: Tag[]; // Added tags
 };
 
 export default function QuestsPage() {
@@ -32,21 +47,42 @@ export default function QuestsPage() {
   const [isLoadingQuests, setIsLoadingQuests] = useState(true);
   const [filterStatus, setFilterStatus] = useState<QuestStatus>(QuestStatus.IN_PROGRESS);
   const [pageMessage, setPageMessage] = useState<{ type: 'error' | 'success', text: string } | null>(null);
-  const [userSkills, setUserSkills] = useState<Skill[]>([]);
+  const [userSkills, setUserSkills] = useState<Skill[]>([]); // Used for modal and now skill filter
+
+  // New filter states
+  const [availableTagsForFilter, setAvailableTagsForFilter] = useState<PrismaTag[]>([]);
+  const [selectedTagIdsForFilter, setSelectedTagIdsForFilter] = useState<string[]>([]);
+  const [filterIsChained, setFilterIsChained] = useState<'any' | 'yes' | 'no'>('any');
+  const [filterBySkillId, setFilterBySkillId] = useState<string>(''); // Empty string for 'any'
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
-  const [currentQuestForModal, setCurrentQuestForModal] = useState<QuestFormData | null>(null);
+  const [currentQuestForModal, setCurrentQuestForModal] = useState<Omit<QuestFormData, 'tagIds' | 'name'> & { name?: string; title?: string; tags?: Tag[] } | null>(null); // Adjusted type for initialData
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const router = useRouter();
 
-  const fetchQuests = async (status: QuestStatus) => {
+  const fetchQuests = useCallback(async () => {
     setIsLoadingQuests(true);
     setPageMessage(null);
+
+    const queryParams = new URLSearchParams();
+    queryParams.append('status', filterStatus);
+    if (selectedTagIdsForFilter.length > 0) {
+      queryParams.append('tagIds', selectedTagIdsForFilter.join(','));
+    }
+    if (filterIsChained === 'yes') {
+      queryParams.append('isChained', 'true');
+    } else if (filterIsChained === 'no') {
+      queryParams.append('isChained', 'false');
+    }
+    if (filterBySkillId) {
+      queryParams.append('skillId', filterBySkillId);
+    }
+
     try {
-      const response = await fetch(`/api/quests?status=${status}`);
+      const response = await fetch(`/api/quests?${queryParams.toString()}`);
       if (!response.ok) {
         const errData = await response.json();
         throw new Error(errData.error || 'Failed to fetch quests');
@@ -60,9 +96,9 @@ export default function QuestsPage() {
     } finally {
       setIsLoadingQuests(false);
     }
-  };
+  }, [filterStatus, selectedTagIdsForFilter, filterIsChained, filterBySkillId]);
 
-  const fetchUserSkills = async () => {
+  const fetchUserSkillsAndTags = async () => {
     try {
       const response = await fetch('/api/skills');
       if (!response.ok) throw new Error('Failed to fetch user skills for quest form');
@@ -70,18 +106,18 @@ export default function QuestsPage() {
       setUserSkills(data);
     } catch (error) {
       console.error(error);
-      // Optionally set a page message if skills are crucial and fail to load
+      toast.error("Could not load skills/tags for filters.");
     }
   };
 
   useEffect(() => {
-    fetchQuests(filterStatus);
-    fetchUserSkills(); // Fetch skills for the modal
-  }, [filterStatus]);
+    fetchQuests();
+    fetchUserSkillsAndTags();
+  }, [fetchQuests]); // fetchQuests is memoized with all filter dependencies
 
   const handleOpenCreateQuestModal = () => {
     setModalMode('create');
-    setCurrentQuestForModal(null); // Important to reset for create
+    setCurrentQuestForModal(null);
     setFormError(null);
     setIsModalOpen(true);
   };
@@ -92,6 +128,7 @@ export default function QuestsPage() {
     setFormError(null);
   };
 
+  // QuestFormModal now submits QuestFormData which includes tagIds
   const handleSubmitQuest = async (questData: QuestFormData) => {
     setIsSubmitting(true);
     setFormError(null);
@@ -124,10 +161,11 @@ export default function QuestsPage() {
       }
 
       handleCloseQuestModal();
-      fetchQuests(filterStatus); // Re-fetch current filter
-      router.refresh();
+      fetchQuests(); // Re-fetch with current filters
+      // router.refresh(); // Might not be needed if fetchQuests updates state sufficiently
     } catch (error: any) {
-      setFormError(error.message);
+      setFormError(error.message); // This error is for the modal
+      toast.error(error.message); // Show general toast too
     } finally {
       setIsSubmitting(false);
     }
@@ -143,33 +181,47 @@ export default function QuestsPage() {
           throw new Error(errorData.error || 'Failed to delete quest');
         }
         setPageMessage({ type: 'success', text: 'Quest deleted successfully.' });
-        fetchQuests(filterStatus); // Re-fetch current filter
-        router.refresh();
+        fetchQuests(); // Re-fetch with current filters
+        // router.refresh();
       } catch (error: any) {
         setPageMessage({ type: 'error', text: error.message });
+        toast.error(error.message);
       }
     }
   };
 
   const handleOpenEditQuestModal = (quest: QuestDisplay) => {
     setModalMode('edit');
-    // Map QuestDisplay to QuestFormData for the modal
-    // Ensure dependencies are mapped correctly, including tempId for keys if needed
-    const formData: QuestFormData = {
+    const initialModalData: Omit<QuestFormData, 'tagIds'|'name'> & {name?:string; title?: string; tags?: Tag[]} = {
         id: quest.id,
-        name: quest.name,
+        title: quest.title, // Use title from QuestDisplay
         description: quest.description || '',
         type: quest.type,
         status: quest.status,
         dependencies: quest.dependencies.map(dep => ({
             ...dep,
-            tempId: dep.id || crypto.randomUUID(), // Use existing ID or generate temp
-            targetDate: dep.targetDate ? dep.targetDate.split('T')[0] : null, // Format for date input
-        }))
+            tempId: dep.id || crypto.randomUUID(),
+            targetDate: dep.targetDate ? dep.targetDate.split('T')[0] : null,
+        })),
+        tags: quest.tags, // Pass the array of Tag objects to QuestFormModal
     };
-    setCurrentQuestForModal(formData);
+    setCurrentQuestForModal(initialModalData);
     setFormError(null);
     setIsModalOpen(true);
+  };
+
+  const handleTagFilterChange = (tagId: string, selected: boolean) => {
+    setSelectedTagIdsForFilter(prev =>
+      selected ? [...prev, tagId] : prev.filter(id => id !== tagId)
+    );
+  };
+
+  const clearAllFilters = () => {
+    setFilterStatus(QuestStatus.IN_PROGRESS); // Reset to default status
+    setSelectedTagIdsForFilter([]);
+    setFilterIsChained('any');
+    setFilterBySkillId('');
+    // fetchQuests will be called by useEffect due to filterStatus change
   };
 
 
@@ -202,11 +254,76 @@ export default function QuestsPage() {
       )}
 
       <div className="mb-6">
+        {/* Filter Panel */}
+      <Card className="mb-6">
+        <CardHeader>
+            <CardTitle className="text-lg flex items-center"><Filter className="mr-2 h-5 w-5"/>Filter Quests</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+                <Label htmlFor="skill-filter">By Skill</Label>
+                <Select value={filterBySkillId} onValueChange={setFilterBySkillId}>
+                    <SelectTrigger id="skill-filter"><SelectValue placeholder="Any Skill" /></SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="">Any Skill</SelectItem>
+                        {userSkills.map(skill => <SelectItem key={skill.id} value={skill.id}>{skill.name}</SelectItem>)}
+                    </SelectContent>
+                </Select>
+            </div>
+            <div>
+                <Label htmlFor="chain-filter">Chain Status</Label>
+                <Select value={filterIsChained} onValueChange={(v) => setFilterIsChained(v as 'any'|'yes'|'no')}>
+                    <SelectTrigger id="chain-filter"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="any">Any</SelectItem>
+                        <SelectItem value="yes">Chained Only</SelectItem>
+                        <SelectItem value="no">Not Chained</SelectItem>
+                    </SelectContent>
+                </Select>
+            </div>
+            <div className="sm:col-span-2 md:col-span-2">
+                <Label>By Tags</Label>
+                <Popover>
+                    <PopoverTrigger asChild>
+                        <Button variant="outline" className="w-full justify-start font-normal">
+                            {selectedTagIdsForFilter.length > 0
+                                ? `${selectedTagIdsForFilter.length} tag(s) selected`
+                                : "Select tags..."}
+                        </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[--radix-popover-trigger-width] max-h-60 overflow-y-auto p-0">
+                        <div className="p-2 space-y-1">
+                        {availableTagsForFilter.length > 0 ? availableTagsForFilter.map(tag => (
+                            <div key={tag.id} className="flex items-center space-x-2 px-2 py-1.5 hover:bg-muted rounded-sm">
+                                <Checkbox
+                                    id={`filter-tag-${tag.id}`}
+                                    checked={selectedTagIdsForFilter.includes(tag.id)}
+                                    onCheckedChange={(checked) => handleTagFilterChange(tag.id, !!checked)}
+                                />
+                                <Label htmlFor={`filter-tag-${tag.id}`} className="text-sm font-normal flex items-center cursor-pointer w-full">
+                                    {tag.color && <span className="w-3 h-3 rounded-sm mr-2 inline-block border" style={{backgroundColor: tag.color}}></span>}
+                                    {tag.name}
+                                </Label>
+                            </div>
+                        )) : <p className="p-2 text-xs text-muted-foreground">No tags available.</p>}
+                        </div>
+                    </PopoverContent>
+                </Popover>
+            </div>
+            <div className="flex items-end">
+                 <Button variant="ghost" onClick={clearAllFilters} className="w-full sm:w-auto text-xs">
+                    <XCircle className="mr-1.5 h-4 w-4"/> Clear All Filters
+                </Button>
+            </div>
+        </CardContent>
+      </Card>
+
+      {/* Status Tabs */}
+      <div className="mb-6">
         <div className="border-b border-gray-200 dark:border-gray-700">
-          {/* Added focus-visible styles for accessibility */}
           <nav className="-mb-px flex space-x-2 sm:space-x-4 overflow-x-auto" aria-label="Tabs">
             {statusFilters.map((status) => (
-              <button
+              <button /* ... existing status tab button ... */
                 key={status}
                 onClick={() => setFilterStatus(status)}
                 aria-label={`Filter by status: ${status.replace('_', ' ')}`}
@@ -223,13 +340,12 @@ export default function QuestsPage() {
         </div>
       </div>
 
-      {isLoadingQuests ? (
-        <div className="text-center py-10">Loading quests...</div>
-      ) : quests.length === 0 ? (
-        <div className="p-6 text-center bg-white rounded-lg shadow-md dark:bg-gray-800">
-          <p className="text-gray-600 dark:text-gray-400">No quests found for status "{filterStatus.replace('_', ' ')}".</p>
+      {isLoadingQuests && <div className="text-center py-10"><Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground"/> Loading quests...</div>}
+      {!isLoadingQuests && quests.length === 0 && (
+        <div className="p-6 text-center bg-muted/30 border rounded-lg">
+          <p className="text-gray-600 dark:text-gray-400">No quests found for the current filters.</p>
         </div>
-      ) : (
+      ) : !isLoadingQuests && (
         <div className="space-y-4">
           {quests.map((quest) => {
             const colors = questStatusColors[quest.status] || questStatusColors[QuestStatus.PENDING];
@@ -238,7 +354,7 @@ export default function QuestsPage() {
               <div key={quest.id} className={`p-4 rounded-lg shadow-sm border ${colors.bg} ${colors.border} focus-within:ring-2 focus-within:ring-indigo-500 focus-within:ring-offset-2 dark:focus-within:ring-offset-gray-800`}>
                 <div className="flex flex-col sm:flex-row justify-between items-start">
                     <div className="flex-grow mb-2 sm:mb-0">
-                        <h2 className={`text-lg font-semibold ${colors.text} mb-1`}>{quest.name}</h2>
+                        <h2 className={`text-lg font-semibold ${colors.text} mb-1`}>{quest.title}</h2> {/* Use title */}
                         <div className="flex flex-wrap items-center gap-2">
                             <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${colors.bg} ${colors.text} border ${colors.border}`}>
                                 {quest.status.replace('_', ' ')}
@@ -246,11 +362,17 @@ export default function QuestsPage() {
                             <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-200">
                                 {quest.type.replace('_', ' ')}
                             </span>
+                            {/* Display Tags */}
+                            {quest.tags && quest.tags.map(tag => (
+                                <span key={tag.id} className="text-xs font-medium px-2 py-0.5 rounded-full border" style={{ backgroundColor: tag.color || '#E5E7EB', color: tag.color ? (parseInt(tag.color.substring(1), 16) > 0xffffff / 2 ? '#000' : '#fff') : '#374151'}}>
+                                    {tag.name}
+                                </span>
+                            ))}
                         </div>
                     </div>
                     <div className="flex space-x-2 flex-shrink-0 mt-2 sm:mt-0">
-                        <button aria-label={`Edit quest ${quest.name}`} onClick={() => handleOpenEditQuestModal(quest)} className="text-xs px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">Edit</button>
-                        <button aria-label={`Delete quest ${quest.name}`} onClick={() => handleDeleteQuest(quest.id)} className="text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400">Delete</button>
+                        <button aria-label={`Edit quest ${quest.title}`} onClick={() => handleOpenEditQuestModal(quest)} className="text-xs px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">Edit</button>
+                        <button aria-label={`Delete quest ${quest.title}`} onClick={() => handleDeleteQuest(quest.id)} className="text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400">Delete</button>
                     </div>
                 </div>
                 {quest.description && <p className={`mt-2 text-sm ${colors.text} opacity-90`}>{quest.description}</p>}
