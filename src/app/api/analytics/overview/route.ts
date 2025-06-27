@@ -1,49 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/db';
-import { QuestType, QuestStatus, RatingCategory } from '@prisma/client'; // Assuming RatingCategory enum exists
-import { subDays, startOfDay, endOfDay } from 'date-fns';
-
-// Helper function to calculate quest completion stats (similar to /api/quests/analytics)
-async function getQuestCompletionStats(userId: string) {
-  const allUserQuests = await prisma.quest.findMany({
-    where: { userId: userId },
-    select: { type: true, status: true },
-  });
-
-  const statsByType: { [key in QuestType]?: { total: number; completed: number; rate: number } } = {};
-  for (const type of Object.values(QuestType)) {
-    statsByType[type] = { total: 0, completed: 0, rate: 0 };
-  }
-
-  for (const quest of allUserQuests) {
-    statsByType[quest.type]!.total += 1;
-    if (quest.status === QuestStatus.COMPLETED) {
-      statsByType[quest.type]!.completed += 1;
-    }
-  }
-
-  let totalQuestsOverall = 0;
-  let completedQuestsOverall = 0;
-
-  for (const type of Object.values(QuestType)) {
-    const typeStats = statsByType[type]!;
-    typeStats.rate = typeStats.total > 0 ? parseFloat((typeStats.completed / typeStats.total).toFixed(2)) : 0;
-    totalQuestsOverall += typeStats.total;
-    completedQuestsOverall += typeStats.completed;
-  }
-
-  const overallCompletionRate = totalQuestsOverall > 0 ? parseFloat((completedQuestsOverall / totalQuestsOverall).toFixed(2)) : 0;
-
-  return {
-    byType: statsByType,
-    overall: {
-        total: totalQuestsOverall,
-        completed: completedQuestsOverall,
-        rate: overallCompletionRate,
-    }
-  };
-}
+// Removed QuestType, QuestStatus, RatingCategory, subDays, startOfDay, endOfDay as they are now handled in analyticsUtils
+import {
+    calculateQuestCompletionStatsForUser,
+    getRecentFitnessActivity,
+    getAverageMood
+} from '@/lib/analyticsUtils'; // Import shared utilities
+import { RatingCategory } from '@prisma/client'; // Still need this if not passed to util
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -62,71 +26,32 @@ export async function GET(req: NextRequest) {
     const totalSkillXp = skillAggregate._sum.currentXp || 0;
     const totalSkills = skillAggregate._count.id || 0;
 
-    // 2. Quest Completion Stats
-    const questCompletionStats = await getQuestCompletionStats(userId);
+    // 2. Quest Completion Stats - Use shared utility
+    const questStats = await calculateQuestCompletionStatsForUser(userId);
 
-    // 3. Fitness Trends (e.g., total workout duration last 7 days)
-    const sevenDaysAgo = subDays(startOfDay(new Date()), 6); // Include today, so 6 days back from start of today
-    const fitnessWorkoutsLast7Days = await prisma.workoutSession.findMany({
-      where: {
-        userId: userId,
-        startTime: { gte: sevenDaysAgo },
-      },
-      select: { durationMinutes: true },
-    });
-    const totalWorkoutDurationLast7Days = fitnessWorkoutsLast7Days.reduce(
-      (sum, workout) => sum + (workout.durationMinutes || 0),
-      0
-    );
-    const workoutCountLast7Days = fitnessWorkoutsLast7Days.length;
+    // 3. Fitness Trends - Use shared utility (default 7 days)
+    const fitnessActivity = await getRecentFitnessActivity(userId);
 
+    // 4. Mood Scores - Use shared utility (default 7 days)
+    const moodData = await getAverageMood(userId);
 
-    // 4. Mood Scores (average daily ratings last 7 days for 'MOOD')
-    // Assuming DailyRating has a 'category' (e.g. MOOD, PRODUCTIVITY) and 'ratingValue'
-    const moodRatingsLast7Days = await prisma.dailyRating.findMany({
-      where: {
-        userId: userId,
-        date: { gte: sevenDaysAgo },
-        // Assuming a direct 'moodRating' field or a category system.
-        // If using categories: category: RatingCategory.MOOD (adjust if schema is different)
-        // For this example, let's assume a 'mood' field directly or a common 'value' field for a 'MOOD' category.
-        // If your DailyRating stores multiple ratings per day (mood, productivity, etc.)
-        // you'll need to filter by the specific rating type.
-        // Let's assume a 'mood' specific field for simplicity here:
-        // THIS IS A GUESS - actual field name may differ.
-        // Replace 'moodScore' with the actual field name from your DailyRating schema.
-        // If using a generic value field with categories:
-        // category: RatingCategory.MOOD
-        // select: { value: true }
-      },
-       // Assuming a generic `value` field and a `category` field
-      select: { value: true, category: true }
-    });
-
-    const moodSpecificRatings = moodRatingsLast7Days
-        .filter(r => r.category === RatingCategory.MOOD && r.value !== null) // Adjust RatingCategory.MOOD as per your enum
-        .map(r => r.value!); // value! because we filtered for not null
-
-    const averageMoodLast7Days =
-      moodSpecificRatings.length > 0
-        ? parseFloat((moodSpecificRatings.reduce((sum, rating) => sum + rating, 0) / moodSpecificRatings.length).toFixed(1))
-        : null; // or 0, or a specific indicator for no data
 
     const overviewData = {
       skills: {
         totalXp: totalSkillXp,
         count: totalSkills,
       },
-      quests: questCompletionStats,
+      quests: questStats, // Contains .byType and .overall
       fitness: {
-        totalDurationLast7DaysMinutes: totalWorkoutDurationLast7Days,
-        workoutCountLast7Days: workoutCountLast7Days,
+        totalDurationLastNDaysMinutes: fitnessActivity.totalDurationMinutes,
+        workoutCountLastNDays: fitnessActivity.workoutCount,
+        periodDays: fitnessActivity.periodDays,
       },
-      wellbeing: { // Or 'ratings', 'moods' etc.
-        averageMoodLast7Days: averageMoodLast7Days, // (scale 1-5 or 1-10?)
-        moodRatingsCountLast7Days: moodSpecificRatings.length,
+      wellbeing: {
+        averageMoodLastNDays: moodData.averageMoodLastNDays,
+        moodRatingsCountLastNDays: moodData.moodRatingsCountLastNDays,
+        periodDays: moodData.periodDays,
       },
-      // Add more aggregates as needed
     };
 
     return NextResponse.json(overviewData);

@@ -2,19 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/db';
 import { QuestType, QuestStatus } from '@prisma/client';
+import { calculateQuestCompletionStatsForUser, QuestAnalyticsSummary } from '@/lib/analyticsUtils'; // Import shared utility
 
-interface QuestAnalytics {
-  completionRateByType: {
-    [key in QuestType]?: {
-      totalQuests: number;
-      completedQuests: number;
-      rate: number;
-    };
-  };
+interface QuestAnalyticsResponse {
+  completionRateByType: QuestAnalyticsSummary['byType']; // Use the byType part from the shared utility's return
   recentCompletions: {
     questId: string;
     questTitle: string;
-    completedAt: Date | string; // Keep as Date, format on client if needed
+    completedAt: string;
   }[];
   // longestStreakForStreakQuests: any; // Deferred for MVP
 }
@@ -27,56 +22,35 @@ export async function GET(req: NextRequest) {
   const userId = session.user.id;
 
   try {
-    const allUserQuests = await prisma.quest.findMany({
-      where: { userId: userId },
-      select: {
-        id: true,
-        type: true,
-        status: true, // To count completed quests directly from the Quest model
-        title: true, // For recent completions
-        completedAt: true, // For recent completions
-      },
-    });
+    // 1. Completion Rate by Type - Use shared utility
+    const questStats = await calculateQuestCompletionStatsForUser(userId);
 
-    // 1. Completion Rate by Type
-    const completionRateByType: QuestAnalytics['completionRateByType'] = {};
-    const questsByType: { [key in QuestType]?: { total: number; completed: number } } = {};
+    // 2. Recent Completions
+    // We still need a direct query for this as calculateQuestCompletionStatsForUser doesn't return individual quests.
+    const recentUserQuests = await prisma.quest.findMany({
+        where: {
+            userId: userId,
+            status: QuestStatus.COMPLETED,
+            completedAt: { not: null }
+        },
+        select: {
+          id: true,
+          title: true,
+          completedAt: true,
+        },
+        orderBy: { completedAt: 'desc' },
+        take: 5,
+      });
 
-    for (const quest of allUserQuests) {
-      if (!questsByType[quest.type]) {
-        questsByType[quest.type] = { total: 0, completed: 0 };
-      }
-      questsByType[quest.type]!.total += 1;
-      if (quest.status === QuestStatus.COMPLETED) {
-        questsByType[quest.type]!.completed += 1;
-      }
-    }
-
-    for (const type in questsByType) {
-      const stats = questsByType[type as QuestType]!;
-      completionRateByType[type as QuestType] = {
-        totalQuests: stats.total,
-        completedQuests: stats.completed,
-        rate: stats.total > 0 ? parseFloat((stats.completed / stats.total).toFixed(2)) : 0,
-      };
-    }
-
-    // 2. Recent Completions (using Quest model's completedAt for simplicity)
-    // This assumes `completedAt` is reliably set when a quest transitions to COMPLETED.
-    const recentCompletionsData = allUserQuests
-      .filter(q => q.status === QuestStatus.COMPLETED && q.completedAt !== null)
-      .sort((a, b) => new Date(b.completedAt!).getTime() - new Date(a.completedAt!).getTime())
-      .slice(0, 5)
-      .map(q => ({
+    const recentCompletionsData = recentUserQuests.map(q => ({
         questId: q.id,
         questTitle: q.title,
-        completedAt: q.completedAt!.toISOString(), // Ensure consistent string format
-      }));
+        completedAt: q.completedAt!.toISOString(), // Assert non-null due to where clause
+    }));
 
-    // 3. Longest Streak for Streak Quests - Deferred for MVP
 
-    const analytics: QuestAnalytics = {
-      completionRateByType,
+    const analytics: QuestAnalyticsResponse = {
+      completionRateByType: questStats.byType,
       recentCompletions: recentCompletionsData,
     };
 

@@ -33,11 +33,21 @@ function validateSkillUpdateInput(data: any): { isValid: boolean; errors?: any; 
   if (data.decayEnabled !== undefined && typeof data.decayEnabled !== 'boolean') {
      return { isValid: false, errors: { decayEnabled: 'Decay enabled must be a boolean.' } };
   }
-  // Add more complex validation if needed: e.g., if decayEnabled, rate and interval should be set.
-  if (data.decayEnabled === true && (data.decayRate === null || data.decayRate === undefined || data.decayIntervalDays === null || data.decayIntervalDays === undefined )) {
-    // If enabling decay, but rate or interval are not being set (or are null), this might be an issue
-    // For now, this validation is basic. A more robust system might require rate/interval if enabling.
+
+  // Enhanced validation: If decay is being enabled, rate and interval must be valid.
+  // This check applies if decayEnabled is explicitly true in the payload.
+  // If decayEnabled is not in payload, we don't enforce this, allowing partial updates of rate/interval.
+  if (data.decayEnabled === true) {
+    if (data.decayRate === null || data.decayRate === undefined || data.decayRate <= 0) {
+      return { isValid: false, errors: { decayRate: 'Decay Rate must be a positive number when enabling decay.' }};
+    }
+    if (data.decayIntervalDays === null || data.decayIntervalDays === undefined || data.decayIntervalDays <= 0) {
+      return { isValid: false, errors: { decayIntervalDays: 'Decay Interval Days must be a positive number when enabling decay.' }};
+    }
   }
+  // If decay is being disabled, we might want to nullify rate and interval in the PATCH handler,
+  // but the validation here doesn't need to enforce that; client can send them as null.
+
   return { isValid: true, data: data as SkillUpdateInput };
 }
 
@@ -84,7 +94,15 @@ export async function PATCH(
   if (!validation.isValid || !validation.data) {
     return NextResponse.json({ error: 'Invalid input', details: validation.errors }, { status: 400 });
   }
-  const updateData = validation.data;
+
+  let updatePayload = { ...validation.data };
+
+  // If decay is being disabled, explicitly nullify rate and interval
+  if (updatePayload.decayEnabled === false) {
+    updatePayload.decayRate = null;
+    updatePayload.decayIntervalDays = null;
+    // Optionally, could also set lastDecayCheck to null or now, but typically not needed if disabled.
+  }
 
   try {
     const existingSkill = await prisma.skill.findUnique({
@@ -98,7 +116,7 @@ export async function PATCH(
     const transactionResult = await prisma.$transaction(async (tx) => {
       const updatedSkillFromDb = await tx.skill.update({
         where: { id: skillId },
-        data: updateData,
+        data: updatePayload, // Use the potentially modified updatePayload
       });
 
       let xpChange = 0;
