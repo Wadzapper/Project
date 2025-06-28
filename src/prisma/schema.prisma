@@ -1,0 +1,149 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  habits          Habit[]
+  quests          Quest[]
+  skills          Skill[]
+  journalEntries  JournalEntry[]
+  philosophy      UserPhilosophy?
+  skillTrees      SkillTree[] // Added inverse relation
+}
+
+model Habit {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+  title          String
+  description    String?
+  tags           String[] @default([])
+  currentStreak  Int      @default(0)
+  longestStreak  Int      @default(0)
+  logs           HabitLog[]
+}
+
+model HabitLog {
+  id        String   @id @default(cuid())
+  habitId   String
+  habit     Habit    @relation(fields: [habitId], references: [id])
+  date      DateTime
+  completed Boolean
+}
+
+model Quest {
+  id             String      @id @default(cuid())
+  userId         String
+  user           User        @relation(fields: [userId], references: [id])
+  title          String
+  description    String?
+  status         QuestStatus @default(PENDING)
+  type           QuestType
+  tags           String[]    @default([])
+  parentQuestId  String?     // for quest chaining
+  createdAt      DateTime    @default(now())
+}
+
+enum QuestStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum QuestType {
+  DAILY
+  WEEKLY
+  ONETIME
+}
+
+model Skill {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  name        String
+  description String?
+  tags        String[] @default([])
+  progressLogs SkillProgressLog[]
+}
+
+model SkillProgressLog {
+  id       String   @id @default(cuid())
+  skillId  String
+  skill    Skill    @relation(fields: [skillId], references: [id])
+  date     DateTime
+  progress Int      // percent or level
+}
+
+model UserPhilosophy {
+  id          String   @id @default(cuid())
+  userId      String   @unique // Added @unique as a user can only have one philosophy
+  user        User     @relation(fields: [userId], references: [id])
+  vision      String
+  values      String
+  principles  String
+}
+
+model JournalEntry {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  content   String
+  mood      String
+  tags      String[] @default([])
+  createdAt DateTime @default(now())
+}
+
+model SkillTree {
+  id      String   @id @default(cuid())
+  userId  String
+  user    User     @relation(fields: [userId], references: [id])
+  title   String
+  nodes   SkillTreeNode[]
+}
+
+model SkillTreeNode {
+  id           String   @id @default(cuid())
+  skillTreeId  String
+  skillTree    SkillTree @relation(fields: [skillTreeId], references: [id])
+  type         NodeType
+  referenceId  String   // references habit, quest or skill ID
+  order        Int
+}
+
+enum NodeType {
+  HABIT
+  QUEST
+  SKILL
+}
+
+model QuestTemplate {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  type        QuestType
+  tags        String[]
+}
+
+model HabitTemplate {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  tags        String[]
+}
+
+model SkillTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  tags        String[]
+}
