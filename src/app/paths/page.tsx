@@ -5,11 +5,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { PlusCircle, ListTree, Eye } from 'lucide-react';
+import { PlusCircle, ListTree, Loader2 } from 'lucide-react'; // Eye removed, Loader2 added
 import toast from 'react-hot-toast';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogDescription, DialogTrigger } from '@/components/ui/dialog'; // For modal
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogDescription, DialogTrigger } from '@/components/ui/dialog';
+import PathList from '@/components/paths/PathList';
+import PathDetailViewer from '@/components/paths/PathDetailViewer';
+import { PathStepType } from '@prisma/client';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
-// Define Path types (mirroring Prisma schema outputs, simplified for list)
+// Define Path types
 export interface PathSummary {
   id: string;
   name: string;
@@ -18,18 +22,10 @@ export interface PathSummary {
   _count?: {
     steps: number;
   };
-import PathList from '@/components/paths/PathList'; // Import the actual PathList component
+}
 
-import PathDetailViewer from '@/components/paths/PathDetailViewer'; // Import the actual PathDetailViewer
-import { PathStepType } from '@prisma/client'; // For Add Step form
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'; // For Add Step form
-
-// Types for skills and quests needed for the "Add Step" form
-// These should ideally come from a shared types definition or their respective page/API modules
 interface BasicSkillInfo { id: string; name: string; }
-interface BasicQuestInfo { id: string; title: string; } // Using 'title' as per Quest API response for path steps
-
-// const PathDetailViewerPlaceholder = ... (This will be removed)
+interface BasicQuestInfo { id: string; title: string; }
 
 
 export default function PathsPage() {
@@ -39,13 +35,11 @@ export default function PathsPage() {
 
   const [selectedPathId, setSelectedPathId] = useState<string | null>(null);
 
-  // State for "Create New Path" modal
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newPathName, setNewPathName] = useState('');
   const [newPathDescription, setNewPathDescription] = useState('');
   const [isCreatingPath, setIsCreatingPath] = useState(false);
 
-  // State for "Add Step to Path" modal
   const [isAddStepModalOpen, setIsAddStepModalOpen] = useState(false);
   const [pathForAddingStep, setPathForAddingStep] = useState<PathSummary | null>(null);
   const [userSkillsForPath, setUserSkillsForPath] = useState<BasicSkillInfo[]>([]);
@@ -67,7 +61,7 @@ export default function PathsPage() {
       setPaths(data);
     } catch (err: any) {
       setErrorPaths(err.message);
-      toast.error(err.message);
+      toast.error(`Failed to load paths: ${err.message}`);
     } finally {
       setIsLoadingPaths(false);
     }
@@ -75,28 +69,29 @@ export default function PathsPage() {
 
   useEffect(() => {
     fetchPaths();
-    // Fetch skills and quests for the "Add Step" modal
     const fetchSkillsAndQuests = async () => {
       try {
         const [skillsRes, questsRes] = await Promise.all([
-          fetch('/api/skills'), // Fetches all skills of the user
-          fetch('/api/quests?status=ALL'), // Fetch all quests (or non-archived/non-completed)
+          fetch('/api/skills'),
+          fetch('/api/quests?status=ALL'),
         ]);
         if (skillsRes.ok) {
           const skillsData = await skillsRes.json();
           setUserSkillsForPath(skillsData.map((s: any) => ({ id: s.id, name: s.name })));
         } else {
           console.error("Failed to fetch skills for path step adder");
+          toast.error("Could not load skills for 'Add Step' form.");
         }
         if (questsRes.ok) {
           const questsData = await questsRes.json();
-          // Assuming questsData items have 'id' and 'title' or 'name'
           setUserQuestsForPath(questsData.map((q: any) => ({ id: q.id, title: q.title || q.name })));
         } else {
           console.error("Failed to fetch quests for path step adder");
+          toast.error("Could not load quests for 'Add Step' form.");
         }
       } catch (error) {
         console.error("Error fetching skills/quests for path step adder:", error);
+        toast.error("Error fetching resources for 'Add Step' form.");
       }
     };
     fetchSkillsAndQuests();
@@ -123,7 +118,7 @@ export default function PathsPage() {
       setNewPathName('');
       setNewPathDescription('');
       setIsCreateModalOpen(false);
-      fetchPaths(); // Refresh path list
+      fetchPaths();
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -139,7 +134,7 @@ export default function PathsPage() {
     const pathMeta = paths.find(p => p.id === pathToAddToId);
     if (pathMeta) {
       setPathForAddingStep(pathMeta);
-      setNewStepType(PathStepType.SKILL); // Default to SKILL
+      setNewStepType(PathStepType.SKILL);
       setSelectedSkillIdForStep('');
       setSelectedQuestIdForStep('');
       setNewStepNotes('');
@@ -169,7 +164,6 @@ export default function PathsPage() {
         skillId: newStepType === PathStepType.SKILL ? stepItemId : null,
         questId: newStepType === PathStepType.QUEST ? stepItemId : null,
         notes: newStepNotes.trim() || null,
-        // Order will be handled by API (appended)
       };
       const response = await fetch(`/api/paths/${pathForAddingStep.id}/steps`, {
         method: 'POST',
@@ -182,21 +176,12 @@ export default function PathsPage() {
       }
       toast.success('Step added successfully!');
       setIsAddStepModalOpen(false);
-      // To refresh the PathDetailViewer, we need it to refetch.
-      // A simple way is to change its key or trigger its internal fetch.
-      // For now, if selectedPathId is the one we added to, setting it again might trigger its useEffect.
-      // Or, PathDetailViewer needs an onStepUpdate prop that PathPage can call to trigger its fetch.
-      // Let's assume PathDetailViewer's useEffect on pathId will refetch.
-      // If PathList's step count needs update, fetchPaths() is needed.
-      fetchPaths(); // This will update step counts in PathList
+      fetchPaths();
       if (selectedPathId === pathForAddingStep.id) {
-        // Force re-render/refetch of PathDetailViewer if it's already showing this path
-        // This is a bit of a hack; ideally PathDetailViewer would have a refresh prop/function
         const currentSelected = selectedPathId;
-        setSelectedPathId(null); // Briefly deselect
-        setTimeout(() => setSelectedPathId(currentSelected), 0); // Reselect
+        setSelectedPathId(null);
+        setTimeout(() => setSelectedPathId(currentSelected), 0);
       }
-
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -204,42 +189,43 @@ export default function PathsPage() {
     }
   };
 
-
   return (
     <div className="container mx-auto p-4 md:p-6 lg:p-8">
       <div className="flex flex-col sm:flex-row justify-between sm:items-center mb-6 gap-4">
-        <h1 className="text-3xl font-bold flex items-center"><ListTree className="mr-3 h-8 w-8 text-primary"/> Learning Paths</h1>
-        {/* Create Path Dialog */}
+        <h1 className="text-3xl font-bold flex items-center text-text-primary">
+          <ListTree className="mr-3 h-8 w-8 text-accent-primary"/> Learning Paths
+        </h1>
         <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
-          {/* ... (Create Path Dialog content - unchanged) ... */}
-           <DialogTrigger asChild>
+          <DialogTrigger asChild>
             <Button>
               <PlusCircle className="mr-2 h-5 w-5" /> Create New Path
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[425px]">
+          <DialogContent className="sm:max-w-[425px] bg-bg-card border-border-primary">
             <DialogHeader>
-              <DialogTitle>Create New Learning Path</DialogTitle>
-              <DialogDescription>Define a name and optional description for your new path.</DialogDescription>
+              <DialogTitle className="text-text-primary">Create New Learning Path</DialogTitle>
+              <DialogDescription className="text-text-secondary">Define a name and optional description for your new path.</DialogDescription>
             </DialogHeader>
             <form onSubmit={handleCreatePathSubmit} className="space-y-4 py-4">
               <div>
-                <Label htmlFor="new-path-name">Path Name</Label>
+                <Label htmlFor="new-path-name" className="text-text-secondary">Path Name</Label>
                 <Input
                   id="new-path-name"
                   value={newPathName}
                   onChange={(e) => setNewPathName(e.target.value)}
                   placeholder="e.g., Web Development Basics"
                   required
+                  className="mt-1 bg-bg-card border-border-secondary text-text-primary focus:ring-accent-primary"
                 />
               </div>
               <div>
-                <Label htmlFor="new-path-description">Description (Optional)</Label>
+                <Label htmlFor="new-path-description" className="text-text-secondary">Description (Optional)</Label>
                 <Textarea
                   id="new-path-description"
                   value={newPathDescription}
                   onChange={(e) => setNewPathDescription(e.target.value)}
                   placeholder="A brief overview of this learning path"
+                  className="mt-1 bg-bg-card border-border-secondary text-text-primary focus:ring-accent-primary"
                 />
               </div>
               <DialogFooter>
@@ -247,7 +233,7 @@ export default function PathsPage() {
                   <Button type="button" variant="outline" disabled={isCreatingPath}>Cancel</Button>
                 </DialogClose>
                 <Button type="submit" disabled={isCreatingPath}>
-                  {isCreatingPath ? 'Creating...' : 'Create Path'}
+                  {isCreatingPath ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/>Creating...</> : 'Create Path'}
                 </Button>
               </DialogFooter>
             </form>
@@ -255,10 +241,10 @@ export default function PathsPage() {
         </Dialog>
       </div>
 
-      {isLoadingPaths && <p className="text-muted-foreground">Loading paths...</p>}
-      {errorPaths && <p className="text-red-500">Error: {errorPaths}</p>}
+      {isLoadingPaths && <div className="text-center py-10 text-text-secondary"><Loader2 className="mr-2 h-5 w-5 animate-spin inline-block"/> Loading paths...</div>}
+      {errorPaths && <p className="text-red-500 dark:text-red-400 p-4 bg-red-500/10 border border-red-500/30 rounded-md">Error: {errorPaths}</p>}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
         <div className="md:col-span-1">
           <PathList
             paths={paths}
@@ -271,41 +257,39 @@ export default function PathsPage() {
           <PathDetailViewer
             pathId={selectedPathId}
             onTriggerAddStep={handleTriggerAddStep}
-            // onStepUpdate={() => { /* Logic to refresh PathDetailViewer if needed, e.g. if it doesn't refetch on its own on prop change */ }}
           />
         </div>
       </div>
 
-      {/* Add Step Dialog */}
       {pathForAddingStep && (
         <Dialog open={isAddStepModalOpen} onOpenChange={setIsAddStepModalOpen}>
-          <DialogContent className="sm:max-w-md">
+          <DialogContent className="sm:max-w-md bg-bg-card border-border-primary">
             <DialogHeader>
-              <DialogTitle>Add Step to: {pathForAddingStep.name}</DialogTitle>
-              <DialogDescription>Select the type of step and the specific skill or quest.</DialogDescription>
+              <DialogTitle className="text-text-primary">Add Step to: {pathForAddingStep.name}</DialogTitle>
+              <DialogDescription className="text-text-secondary">Select the type of step and the specific skill or quest.</DialogDescription>
             </DialogHeader>
             <form onSubmit={handleAddStepSubmit} className="space-y-4 py-4">
               <div>
-                <Label htmlFor="step-type">Step Type</Label>
+                <Label htmlFor="step-type" className="text-text-secondary">Step Type</Label>
                 <Select value={newStepType} onValueChange={(value) => setNewStepType(value as PathStepType)}>
-                  <SelectTrigger id="step-type"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={PathStepType.SKILL}>Skill</SelectItem>
-                    <SelectItem value={PathStepType.QUEST}>Quest</SelectItem>
+                  <SelectTrigger id="step-type" className="mt-1 bg-bg-card border-border-secondary text-text-primary focus:ring-accent-primary"><SelectValue /></SelectTrigger>
+                  <SelectContent className="bg-bg-card border-border-primary text-text-primary">
+                    <SelectItem value={PathStepType.SKILL} className="hover:bg-gray-100 dark:hover:bg-gray-800">Skill</SelectItem>
+                    <SelectItem value={PathStepType.QUEST} className="hover:bg-gray-100 dark:hover:bg-gray-800">Quest</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
               {newStepType === PathStepType.SKILL && (
                 <div>
-                  <Label htmlFor="skill-select">Select Skill</Label>
+                  <Label htmlFor="skill-select" className="text-text-secondary">Select Skill</Label>
                   <Select value={selectedSkillIdForStep} onValueChange={setSelectedSkillIdForStep}>
-                    <SelectTrigger id="skill-select"><SelectValue placeholder="Choose a skill..." /></SelectTrigger>
-                    <SelectContent>
+                    <SelectTrigger id="skill-select" className="mt-1 bg-bg-card border-border-secondary text-text-primary focus:ring-accent-primary"><SelectValue placeholder="Choose a skill..." /></SelectTrigger>
+                    <SelectContent className="bg-bg-card border-border-primary text-text-primary">
                       {userSkillsForPath.map(skill => (
-                        <SelectItem key={skill.id} value={skill.id}>{skill.name}</SelectItem>
+                        <SelectItem key={skill.id} value={skill.id} className="hover:bg-gray-100 dark:hover:bg-gray-800">{skill.name}</SelectItem>
                       ))}
-                      {userSkillsForPath.length === 0 && <div className="p-2 text-sm text-muted-foreground">No skills available.</div>}
+                      {userSkillsForPath.length === 0 && <div className="p-2 text-sm text-text-secondary">No skills available.</div>}
                     </SelectContent>
                   </Select>
                 </div>
@@ -313,26 +297,26 @@ export default function PathsPage() {
 
               {newStepType === PathStepType.QUEST && (
                 <div>
-                  <Label htmlFor="quest-select">Select Quest</Label>
+                  <Label htmlFor="quest-select" className="text-text-secondary">Select Quest</Label>
                   <Select value={selectedQuestIdForStep} onValueChange={setSelectedQuestIdForStep}>
-                    <SelectTrigger id="quest-select"><SelectValue placeholder="Choose a quest..." /></SelectTrigger>
-                    <SelectContent>
+                    <SelectTrigger id="quest-select" className="mt-1 bg-bg-card border-border-secondary text-text-primary focus:ring-accent-primary"><SelectValue placeholder="Choose a quest..." /></SelectTrigger>
+                    <SelectContent className="bg-bg-card border-border-primary text-text-primary">
                       {userQuestsForPath.map(quest => (
-                        <SelectItem key={quest.id} value={quest.id}>{quest.title}</SelectItem>
+                        <SelectItem key={quest.id} value={quest.id} className="hover:bg-gray-100 dark:hover:bg-gray-800">{quest.title}</SelectItem>
                       ))}
-                      {userQuestsForPath.length === 0 && <div className="p-2 text-sm text-muted-foreground">No quests available.</div>}
+                      {userQuestsForPath.length === 0 && <div className="p-2 text-sm text-text-secondary">No quests available.</div>}
                     </SelectContent>
                   </Select>
                 </div>
               )}
               <div>
-                <Label htmlFor="step-notes">Notes (Optional)</Label>
-                <Textarea id="step-notes" value={newStepNotes} onChange={(e) => setNewStepNotes(e.target.value)} placeholder="Any notes for this step..." />
+                <Label htmlFor="step-notes" className="text-text-secondary">Notes (Optional)</Label>
+                <Textarea id="step-notes" value={newStepNotes} onChange={(e) => setNewStepNotes(e.target.value)} placeholder="Any notes for this step..." className="mt-1 bg-bg-card border-border-secondary text-text-primary focus:ring-accent-primary" />
               </div>
               <DialogFooter>
                 <DialogClose asChild><Button type="button" variant="outline" disabled={isAddingStep}>Cancel</Button></DialogClose>
                 <Button type="submit" disabled={isAddingStep}>
-                  {isAddingStep ? 'Adding Step...' : 'Add Step'}
+                  {isAddingStep ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/>Adding Step...</> : 'Add Step'}
                 </Button>
               </DialogFooter>
             </form>

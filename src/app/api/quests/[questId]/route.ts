@@ -1,16 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/db';
-import { QuestStatus, QuestType, QuestDependencyType, Skill, UserAchievement } from '@prisma/client'; // Added Skill, UserAchievement
+import { QuestStatus, QuestType, QuestDependencyType, Skill, UserAchievement, Prisma } from '@prisma/client'; // Added Prisma
 import { evaluateQuestCompletion } from '@/lib/questUtils';
 import { checkAndUnlockAchievements } from '@/lib/achievementUtils';
 
 interface QuestUpdateInput {
-  name?: string;
-  description?: string;
-  name?: string; // This should probably be 'title' to match Prisma model
-  title?: string;
-  description?: string;
+  name?: string; // Changed from title to name to match Prisma model
+  description?: string | null; // Made description explicitly nullable to match model
   status?: QuestStatus;
   type?: QuestType;
   dependencyUpdates?: Array<{
@@ -18,15 +15,14 @@ interface QuestUpdateInput {
     isCompleted?: boolean;
     currentProgress?: number;
   }>;
-  tagIds?: string[]; // Added for tags
+  // tagIds removed as Quest model does not have tags field/relation
 }
 
 function validateQuestUpdateInput(data: any): { isValid: boolean; errors?: any; data?: QuestUpdateInput } {
-  const { name, title, ...rest } = data; // Handle potential name/title ambiguity
-  const effectiveTitle = title || name;
+  const { name, ...rest } = data;
 
-  if (effectiveTitle !== undefined && (typeof effectiveTitle !== 'string' || effectiveTitle.trim().length === 0)) {
-    return { isValid: false, errors: { title: 'Title cannot be empty.' } };
+  if (name !== undefined && (typeof name !== 'string' || name.trim().length === 0)) {
+    return { isValid: false, errors: { name: 'Name cannot be empty if provided.' } };
   }
   if (rest.status !== undefined && !Object.values(QuestStatus).includes(rest.status as QuestStatus)) {
     return { isValid: false, errors: { status: 'Invalid status.' } };
@@ -34,14 +30,9 @@ function validateQuestUpdateInput(data: any): { isValid: boolean; errors?: any; 
   if (rest.type !== undefined && !Object.values(QuestType).includes(rest.type as QuestType)) {
     return { isValid: false, errors: { type: 'Invalid type.' } };
   }
-  if (rest.tagIds !== undefined && (!Array.isArray(rest.tagIds) || !rest.tagIds.every((id: any) => typeof id === 'string'))) {
-    return { isValid: false, errors: { tagIds: 'tagIds must be an array of strings.' } };
-  }
-  // Reconstruct data with effectiveTitle if name was used
-  const validatedData = { ...rest, title: effectiveTitle };
-  if (name && !title) validatedData.title = name; // Prefer title, but accept name
-  if (name !== undefined) delete (validatedData as any).name; // Remove 'name' if it existed to avoid conflict with 'title'
+  // No tagIds validation needed anymore
 
+  const validatedData = { ...rest, name: name }; // Use name
   return { isValid: true, data: validatedData as QuestUpdateInput };
 }
 
@@ -59,25 +50,14 @@ export async function GET(
       where: { id: questId, userId: session.user.id },
       include: {
         dependencies: { include: { skill: { select: { id: true, name: true } } } },
-        questTags: { // Include linked tags
-          select: {
-            tag: {
-              select: { id: true, name: true, color: true }
-            }
-          }
-        }
+        // Quest model has no 'tags' or 'questTags' relation in current schema
       },
     });
     if (!quest) {
       return NextResponse.json({ error: 'Quest not found or access denied' }, { status: 404 });
     }
-
-    const { questTags, ...questData } = quest;
-    const responseData = {
-      ...questData,
-      tags: questTags.map(qt => qt.tag)
-    };
-    return NextResponse.json(responseData);
+    // Return quest data as is; it doesn't have a separate tags array to flatten
+    return NextResponse.json(quest);
   } catch (error) {
     console.error(`Error fetching quest ${questId}:`, error);
     return NextResponse.json({ error: 'Failed to fetch quest' }, { status: 500 });
@@ -92,6 +72,7 @@ export async function PATCH(
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const userId = session.user.id; // userId is guaranteed to be string here
   const { questId } = params;
 
   let body: QuestUpdateInput;
@@ -102,7 +83,8 @@ export async function PATCH(
   if (!validation.isValid || !validation.data) {
     return NextResponse.json({ error: 'Invalid input', details: validation.errors }, { status: 400 });
   }
-  const { tagIds, dependencyUpdates, ...otherUpdateData } = validation.data; // Separate tagIds
+  // Removed tagIds from destructuring as it's no longer in QuestUpdateInput
+  const { dependencyUpdates, ...otherUpdateData } = validation.data;
 
   try {
     const existingQuest = await prisma.quest.findUnique({
@@ -116,8 +98,9 @@ export async function PATCH(
     const transactionResult = await prisma.$transaction(async (tx) => {
       let questToUpdate = { ...existingQuest };
 
+      // Use Prisma.QuestUpdateInput for type safety
       const questUpdatePayload: Prisma.QuestUpdateInput = {};
-      if (otherUpdateData.title !== undefined) questUpdatePayload.title = otherUpdateData.title;
+      if (otherUpdateData.name !== undefined) questUpdatePayload.name = otherUpdateData.name; // Use name
       if (otherUpdateData.description !== undefined) questUpdatePayload.description = otherUpdateData.description;
       if (otherUpdateData.type !== undefined) questUpdatePayload.type = otherUpdateData.type;
       if (otherUpdateData.status !== undefined) {
@@ -134,27 +117,23 @@ export async function PATCH(
           where: { id: questId }, data: questUpdatePayload,
           include: { dependencies: { include: { skill: true } } }
         });
-        questToUpdate = { ...questToUpdate, ...updatedQuestPartial}; // Merge basic field updates
-        if (questUpdatePayload.status && questUpdatePayload.status !== existingQuest.status) {
-            await tx.questLog.create({
-                data: { questId, userId: session.user!.id, statusChange: `MANUAL_STATUS_TO_${questUpdatePayload.status}`, loggedAt: new Date() }
+        questToUpdate = { ...questToUpdate, ...updatedQuestPartial};
+        if (otherUpdateData.status && otherUpdateData.status !== existingQuest.status) { // Use otherUpdateData.status which is QuestStatus
+            // Corrected QuestLog creation based on schema: status (not statusChange), note (not details), createdAt (not loggedAt)
+             await tx.questLog.create({
+                data: { questId, userId: userId, status: otherUpdateData.status!, note: `MANUAL_STATUS_TO_${otherUpdateData.status}` } // Used userId and added non-null assertion for status
             });
         }
       }
-      // If only tags or dependencies are changing, questToUpdate remains existingQuest for eval
-      // Re-fetch with full includes if only deps/tags changed to ensure eval gets latest
-      if (Object.keys(questUpdatePayload).length === 0 && (dependencyUpdates || tagIds !== undefined)) {
-         const currentQuestWithDepsAndTags = await tx.quest.findUnique({
-            where: {id: questId},
-            include: {
-                dependencies: {include: {skill: true}},
-                questTags: {include: {tag: true}}
-            }
-        });
-        if (!currentQuestWithDepsAndTags) throw new Error("Quest disappeared during transaction");
-        questToUpdate = currentQuestWithDepsAndTags;
-      }
 
+      if (Object.keys(questUpdatePayload).length === 0 && (dependencyUpdates)) { // Removed tagIds condition
+         const currentQuestWithDeps = await tx.quest.findUnique({ // Removed questTags include
+            where: {id: questId},
+            include: { dependencies: {include: {skill: true}} }
+        });
+        if (!currentQuestWithDeps) throw new Error("Quest disappeared during transaction");
+        questToUpdate = currentQuestWithDeps;
+      }
 
       let manualDepsChanged = false;
       if (dependencyUpdates && dependencyUpdates.length > 0) {
@@ -164,8 +143,8 @@ export async function PATCH(
             if (depToModify.isCompleted !== depUpdate.isCompleted) {
                 await tx.questDependency.update({ where: { id: depUpdate.dependencyId }, data: { isCompleted: depUpdate.isCompleted }});
                 manualDepsChanged = true;
-                await tx.questLog.create({
-                    data: { questId, userId: session.user!.id, statusChange: `MANUAL_DEP_CHECK_${depUpdate.isCompleted ? 'COMPLETED' : 'UNCOMPLETED'}`, details: { dependencyId: depUpdate.dependencyId, dependencyType: depToModify.type }}
+                await tx.questLog.create({ // Corrected QuestLog
+                    data: { questId, userId: userId, status: questToUpdate.status!, note: `MANUAL_DEP_CHECK_${depUpdate.isCompleted ? 'COMPLETED' : 'UNCOMPLETED'} - DepID: ${depUpdate.dependencyId}` }  // Used userId and added non-null assertion for status
                 });
             }
           }
@@ -178,8 +157,8 @@ export async function PATCH(
       }
 
       const allUserSkills = await tx.skill.findMany({ where: { userId: session.user!.id } });
-      const userSkillsMap = new Map(allUserSkills.map(s => [s.id, s as Skill])); // Cast to Skill type
-      const evalResult = evaluateQuestCompletion(questToUpdate as any, userSkillsMap); // Cast needed for QuestWithDetails
+      const userSkillsMap = new Map(allUserSkills.map(s => [s.id, s as Skill]));
+      const evalResult = evaluateQuestCompletion(questToUpdate as any, userSkillsMap);
       let finalQuestState = questToUpdate;
       let newlyUnlockedAchievements: UserAchievement[] = [];
 
@@ -200,66 +179,39 @@ export async function PATCH(
             await tx.questDependency.update({ where: { id: dep.id }, data: { isCompleted: dep.isCompleted, currentProgress: dep.currentProgress }});
           }
         }
-        if (evalResult.newQuestStatus !== existingQuest.status) { // Compare with original status before any updates in this transaction
-             await tx.questLog.create({
-                data: { questId, userId: session.user!.id, statusChange: `STATUS_CHANGED_TO_${evalResult.newQuestStatus}`, details: { reason: "quest_patch_api_evaluation" }}
+        if (evalResult.newQuestStatus !== existingQuest.status) {
+             await tx.questLog.create({ // Corrected QuestLog
+                data: { questId, userId: userId, status: evalResult.newQuestStatus, note: `STATUS_CHANGED_TO_${evalResult.newQuestStatus} via evaluation` } // Used userId
             });
         }
       }
 
       if (finalQuestState.status === QuestStatus.COMPLETED && existingQuest.status !== QuestStatus.COMPLETED) {
-        newlyUnlockedAchievements = await checkAndUnlockAchievements(tx, session.user!.id, "QUEST_COMPLETED", { quest: finalQuestState as any });
+        newlyUnlockedAchievements = await checkAndUnlockAchievements(tx, userId, "QUEST_COMPLETED", { quest: finalQuestState as any }); // Used userId
       }
 
-      // Handle tagIds sync if provided
-      if (tagIds !== undefined) {
-        if (tagIds.length > 0) {
-            const tagsExistCount = await tx.tag.count({
-                where: { id: { in: tagIds }, userId: session.user!.id }
-            });
-            if (tagsExistCount !== tagIds.length) {
-                throw new Error('One or more provided tag IDs for update are invalid or do not belong to the user.');
-            }
-        }
-        await tx.questTag.deleteMany({ where: { questId: questId } });
-        if (tagIds.length > 0) {
-          await tx.questTag.createMany({
-            data: tagIds.map(tagId => ({
-              questId: questId,
-              tagId: tagId,
-              assignedBy: session.user!.id!,
-            })),
-          });
-        }
-      }
+      // Tag logic removed as Quest model does not have tags field/relation
 
-      // Refetch the final quest state with all includes for the response
-      const finalQuestWithAllDetails = await tx.quest.findUnique({
+      const finalQuestWithDetails = await tx.quest.findUnique({
         where: { id: questId },
         include: {
             dependencies: { include: { skill: true } },
-            questTags: { include: { tag: true } }
+            // questTags removed
         }
       });
-      if (!finalQuestWithAllDetails) throw new Error("Failed to refetch final quest state.");
+      if (!finalQuestWithDetails) throw new Error("Failed to refetch final quest state."); // Corrected variable name
 
-      return { updatedQuest: finalQuestWithAllDetails, unlockedAchievements: newlyUnlockedAchievements };
+      return { updatedQuest: finalQuestWithDetails, unlockedAchievements: newlyUnlockedAchievements };
     });
 
-    // Map to desired response structure (flatten tags)
-    const { questTags: finalQuestTags, ...finalQuestData } = transactionResult.updatedQuest;
-    const responseData = {
-        ...finalQuestData,
-        tags: finalQuestTags.map(qt => qt.tag),
+    // Response does not need to map tags anymore
+    return NextResponse.json({
+        ...transactionResult.updatedQuest,
         unlockedAchievements: transactionResult.unlockedAchievements
-    };
+    });
 
-    return NextResponse.json(responseData);
   } catch (error: any) {
     console.error(`Error updating quest ${questId}:`, error);
-    if (error.message.includes('tag IDs for update are invalid')) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
-    }
     return NextResponse.json({ error: error.message || 'Failed to update quest' }, { status: 500 });
   }
 }
@@ -280,6 +232,11 @@ export async function DELETE(
     if (!existingQuest) {
       return NextResponse.json({ error: 'Quest not found or access denied' }, { status: 404 });
     }
+    // Need to delete related QuestDependencies and QuestLogs first if onDelete Cascade is not set or not working as expected
+    await prisma.questDependency.deleteMany({ where: { questId: questId }});
+    await prisma.questLog.deleteMany({ where: { questId: questId }});
+    // QuestTags delete many removed as relation doesn't exist
+
     await prisma.quest.delete({ where: { id: questId } });
     return NextResponse.json({ message: 'Quest deleted successfully' }, { status: 200 });
   } catch (error) {

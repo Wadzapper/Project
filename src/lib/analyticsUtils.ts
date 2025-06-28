@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
-import { QuestType, QuestStatus } from '@prisma/client';
+import { QuestType, QuestStatus, DailyRating } from '@prisma/client'; // Added DailyRating
+import { subDays, startOfDay } from 'date-fns'; // Moved to top
 
 export interface QuestCompletionStatsByType {
   totalQuests: number;
@@ -18,27 +19,19 @@ export interface QuestAnalyticsSummary {
   overall: OverallQuestCompletionStats;
 }
 
-/**
- * Calculates quest completion statistics for a given user.
- * Includes stats broken down by quest type and overall summary.
- */
 export async function calculateQuestCompletionStatsForUser(userId: string): Promise<QuestAnalyticsSummary> {
   const allUserQuests = await prisma.quest.findMany({
     where: { userId: userId },
-    select: { type: true, status: true }, // Only fetch necessary fields
+    select: { type: true, status: true },
   });
 
   const statsByType: { [key in QuestType]?: { total: number; completed: number } } = {};
 
-  // Initialize for all quest types to ensure all types are present in the output
   for (const type of Object.values(QuestType)) {
     statsByType[type] = { total: 0, completed: 0 };
   }
 
   for (const quest of allUserQuests) {
-    if (!statsByType[quest.type]) { // Should not happen due to pre-initialization but good safeguard
-      statsByType[quest.type] = { total: 0, completed: 0 };
-    }
     statsByType[quest.type]!.total += 1;
     if (quest.status === QuestStatus.COMPLETED) {
       statsByType[quest.type]!.completed += 1;
@@ -50,7 +43,7 @@ export async function calculateQuestCompletionStatsForUser(userId: string): Prom
   let completedQuestsOverall = 0;
 
   for (const type of Object.values(QuestType)) {
-    const typeStats = statsByType[type]!; // Asserting it's initialized
+    const typeStats = statsByType[type]!;
     finalStatsByType[type] = {
       totalQuests: typeStats.total,
       completedQuests: typeStats.completed,
@@ -74,15 +67,13 @@ export async function calculateQuestCompletionStatsForUser(userId: string): Prom
   };
 }
 
-// Add other shared analytics utility functions here in the future
-// e.g., for fitness trends, mood averages, skill XP calculations if they become complex and reused.
-
 export async function getRecentFitnessActivity(userId: string, days: number = 7) {
     const NDaysAgo = subDays(startOfDay(new Date()), days - 1);
     const workoutSessions = await prisma.workoutSession.findMany({
       where: {
         userId: userId,
-        startTime: { gte: NDaysAgo },
+        // Assuming WorkoutSession has a 'date' or 'startTime' field
+        date: { gte: NDaysAgo },
       },
       select: { durationMinutes: true },
     });
@@ -97,23 +88,21 @@ export async function getRecentFitnessActivity(userId: string, days: number = 7)
     };
 }
 
-// Need to import subDays, startOfDay from date-fns
-import { subDays, startOfDay } from 'date-fns';
-import { RatingCategory } from '@prisma/client';
-
-
 export async function getAverageMood(userId: string, days: number = 7) {
     const NDaysAgo = subDays(startOfDay(new Date()), days - 1);
     const moodRatings = await prisma.dailyRating.findMany({
         where: {
           userId: userId,
           date: { gte: NDaysAgo },
-          category: RatingCategory.MOOD, // Assuming RatingCategory.MOOD exists
+          mood: { not: null }, // Ensure mood value exists
         },
-        select: { value: true }
+        select: { mood: true } // Select the mood field
       });
 
-      const validMoodRatings = moodRatings.filter(r => r.value !== null).map(r => r.value!);
+      // Filter out any potential nulls again just in case, and ensure it's a number
+      const validMoodRatings = moodRatings
+        .map(r => r.mood)
+        .filter((moodValue): moodValue is number => typeof moodValue === 'number');
 
       const averageMood =
         validMoodRatings.length > 0

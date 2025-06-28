@@ -19,23 +19,34 @@ export async function GET(
   }
 
   try {
-    const path = await prisma.path.findUnique({
+    const skillTree = await prisma.skillTree.findUnique({
       where: { id: pathId, userId: userId },
       include: {
-        steps: {
-          orderBy: { order: 'asc' },
-          include: { // Include skill/quest details for context if needed by UI
-            skill: { select: { id: true, name: true, currentLevel: true } }, // Example fields
-            quest: { select: { id: true, title: true, status: true } },     // Example fields
+        nodes: { // Corresponds to 'steps' conceptually
+          // orderBy: { positionY: 'asc', positionX: 'asc' }, // Example ordering, if nodes have position
+          include: {
+            skill: { select: { id: true, name: true, currentLevel: true } },
+            // Quest relation does not exist on SkillTreeNode, remove for now
+            // quest: { select: { id: true, title: true, status: true } },
           }
         },
       },
     });
 
-    if (!path) {
-      return NextResponse.json({ error: 'Path not found or access denied' }, { status: 404 });
+    if (!skillTree) {
+      return NextResponse.json({ error: 'Skill Tree (Path) not found or access denied' }, { status: 404 });
     }
-    return NextResponse.json(path);
+    // Rename to 'path' for consistency with frontend if it expects 'path' and 'steps'
+    const pathResponse = {
+        ...skillTree,
+        steps: skillTree.nodes.map(node => ({
+            ...node,
+            // map other node fields if necessary to match expected "step" structure
+        }))
+    };
+    // delete (pathResponse as any).nodes; // remove original nodes if steps fully replaces it
+
+    return NextResponse.json(pathResponse);
   } catch (error) {
     console.error(`Error fetching path ${pathId}:`, error);
     return NextResponse.json({ error: 'Failed to fetch path' }, { status: 500 });

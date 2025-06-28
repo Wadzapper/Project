@@ -53,16 +53,16 @@ export async function GET(req: NextRequest) {
       where: { id: userId },
       select: { id: true, name: true, email: true, createdAt: true, personalPhilosophy: true }
     });
-    const skillsData = async () => prisma.skill.findMany({ where: { userId }, include: { progressLogs: { orderBy: { timestamp: 'desc' } } }, orderBy: { createdAt: 'desc' } });
+    const skillsData = async () => prisma.skill.findMany({ where: { userId }, include: { skillProgressLogs: { orderBy: { createdAt: 'desc' } } }, orderBy: { createdAt: 'desc' } });
     const skillTreesData = async () => prisma.skillTree.findMany({ where: { userId }, include: { nodes: { include: { skill: {select: {name: true}} } } } , orderBy: { createdAt: 'desc' }});
-    const questsData = async () => prisma.quest.findMany({ where: { userId }, include: { dependencies: true, logs: { orderBy: { timestamp: 'desc' } } }, orderBy: { createdAt: 'desc' } });
+    const questsData = async () => prisma.quest.findMany({ where: { userId }, include: { dependencies: true, logs: { orderBy: { createdAt: 'desc' } } }, orderBy: { createdAt: 'desc' } });
     const achievementsData = async () => prisma.userAchievement.findMany({ where: { userId }, include: { achievement: true }, orderBy: { unlockedAt: 'desc' } });
     const habitsData = async () => prisma.habit.findMany({ where: { userId }, include: { logs: { orderBy: { date: 'desc' } } }, orderBy: { createdAt: 'desc' } });
     const journalEntriesData = async () => prisma.journalEntry.findMany({ where: { userId }, orderBy: { date: 'desc' } });
     const dailyRatingsData = async () => prisma.dailyRating.findMany({ where: { userId }, orderBy: { date: 'desc' } });
-    const workoutSessionsData = async () => prisma.workoutSession.findMany({ where: { userId }, include: { exercises: { include: { sets: true, exerciseType: true } } }, orderBy: { startTime: 'desc' } });
+    const workoutSessionsData = async () => prisma.workoutSession.findMany({ where: { userId }, include: { exerciseLogs: { include: { sets: true } } }, orderBy: { date: 'desc' } });
     const bodyMetricsData = async () => prisma.bodyMetric.findMany({ where: { userId }, orderBy: { date: 'desc' } });
-    const sleepLogsData = async () => prisma.sleepLog.findMany({ where: { userId }, orderBy: { sleepTime: 'desc' } });
+    const sleepLogsData = async () => prisma.sleepLog.findMany({ where: { userId }, orderBy: { date: 'desc' } }); // Corrected to 'date' if 'sleepTime' is not the intended sort key for logs generally
 
 
     if (requestedFormat === 'json') {
@@ -95,8 +95,8 @@ export async function GET(req: NextRequest) {
         rawDataArray = (await skillsData()).map(s => ({...s, progressLogs: undefined})); // Exclude nested logs for simple CSV
         csvHeaders = ['id', 'name', 'description', 'currentLevel', 'currentXp', 'targetXpForNextLevel', 'createdAt', 'decayEnabled', 'decayRate', 'decayIntervalDays', 'lastDecayCheck'];
       } else if (requestedType === 'quests') {
-        rawDataArray = (await questsData()).map(q => ({...q, dependencies: undefined, logs: undefined, title: q.title}));
-        csvHeaders = ['id', 'title', 'description', 'type', 'status', 'xpReward', 'createdAt', 'completedAt', 'failedAt', 'deadline'];
+        rawDataArray = (await questsData()).map(q => ({...q, dependencies: undefined, logs: undefined, name: q.name})); // Changed q.title to q.name
+        csvHeaders = ['id', 'name', 'description', 'type', 'status', 'createdAt', 'completedAt', 'failedAt']; // Removed xpReward, deadline as they are not on Quest model
       } else if (requestedType === 'habits') {
         rawDataArray = (await habitsData()).map(h => ({...h, logs: undefined, tags: h.tags.join('|')}));
         csvHeaders = ['id', 'name', 'description', 'type', 'goalType', 'frequency', 'periodInDays', 'tags', 'archived', 'createdAt', 'currentStreak', 'longestStreak', 'successCount', 'totalLogCount', 'lastLoggedDate'];

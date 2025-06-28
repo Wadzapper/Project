@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
     case '1y': startDate = startOfDay(subDays(veryEndDate, 364)); break;
     case 'all':
       const firstQuestLog = await prisma.questLog.findFirst({
-        where: { userId, statusChange: `STATUS_CHANGED_TO_${QuestStatus.COMPLETED}` }, // Consider completedAt on Quest model too
+        where: { userId, status: QuestStatus.COMPLETED },
         orderBy: { createdAt: 'asc' },
       });
       startDate = firstQuestLog ? startOfDay(firstQuestLog.createdAt) : startOfDay(subDays(veryEndDate, 29));

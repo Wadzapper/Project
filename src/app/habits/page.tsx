@@ -18,7 +18,7 @@ interface Tag {
   color?: string | null;
 }
 
-// HabitDisplay now expects tags as an array of Tag objects
+// HabitDisplay now expects tags as an array of strings, matching the API and Prisma model
 export interface HabitDisplay {
   id: string;
   name: string;
@@ -27,7 +27,7 @@ export interface HabitDisplay {
   goalType: HabitGoalType;
   frequency: number;
   periodInDays?: number | null;
-  tags: Tag[]; // Changed from string[] to Tag[]
+  tags: string[]; // Changed back to string[]
   archived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -42,7 +42,8 @@ export interface HabitDisplay {
 // HabitFormModal initialData prop expects tags as Tag[] for edit mode,
 // but its internal HabitFormData uses tagIds: string[].
 // The onSubmit prop for HabitFormModal expects HabitFormData (which has tagIds).
-type HabitFormModalInitialData = Omit<HabitFormData, 'tagIds'> & { tags?: Tag[] };
+// initialData.tags should be string[] to match HabitDisplay and simplify data flow
+type HabitFormModalInitialData = Omit<HabitFormData, 'tagIds'> & { tags?: string[] };
 
 
 export default function HabitsPage() {
@@ -110,10 +111,10 @@ export default function HabitsPage() {
         name: '',
         description: '',
         type: activeTab,
-        goalType: HabitGoalType.STREAK,
+      goalType: HabitGoalType.DAILY, // Changed STREAK to DAILY as STREAK is not a valid HabitGoalType
         frequency: 1,
-        periodInDays: 1,
-        tags: [], // Or undefined, HabitFormModal will default tagIds to []
+      // periodInDays: 1, // Not applicable for DAILY goal type by default
+      tags: [],
         archived: false,
       });
     }
@@ -304,7 +305,7 @@ export default function HabitsPage() {
           onSubmit={handleSubmitModal}
           initialData={currentHabitForModal}
           mode={modalMode}
-          isSubmitting={isSubmitting}
+          isLoading={isSubmitting} // Changed prop name from isSubmitting to isLoading
         />
       )}
     </div>

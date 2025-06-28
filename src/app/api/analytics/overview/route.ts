@@ -7,7 +7,7 @@ import {
     getRecentFitnessActivity,
     getAverageMood
 } from '@/lib/analyticsUtils'; // Import shared utilities
-import { RatingCategory } from '@prisma/client'; // Still need this if not passed to util
+// Removed incorrect import of RatingCategory
 
 export async function GET(req: NextRequest) {
   const session = await auth();

@@ -84,6 +84,7 @@ export async function PATCH(
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const userId = session.user.id; // Define userId from session
   const { skillId } = params;
 
   let body;
@@ -120,15 +121,17 @@ export async function PATCH(
       });
 
       let xpChange = 0;
-      if (updateData.currentXp !== undefined && oldSkillValues.currentXp !== undefined) {
-        xpChange = updateData.currentXp - oldSkillValues.currentXp;
+      // Corrected: use updatePayload instead of undefined updateData
+      if (updatePayload.currentXp !== undefined && oldSkillValues.currentXp !== undefined) {
+        xpChange = updatePayload.currentXp - oldSkillValues.currentXp;
       }
       if (xpChange !== 0 || oldSkillValues.currentLevel !== updatedSkillFromDb.currentLevel) {
         await tx.skillProgressLog.create({
           data: {
-            skillId: updatedSkillFromDb.id, userId: session.user!.id, xpChange: xpChange,
-            newXp: updatedSkillFromDb.currentXp, newLevel: updatedSkillFromDb.currentLevel,
-            changeReason: "skill_update_api",
+            skillId: updatedSkillFromDb.id,
+            userId: userId,
+            xpChange: xpChange,
+            source: "SKILL_UPDATE_API", // Changed from changeReason, newXp, newLevel
           }
         });
       }
@@ -171,7 +174,7 @@ export async function PATCH(
                     progressDataToUpdate.currentProgress = Math.max(0, skillForDep.currentXp - dep.initialSkillXp);
                   }
                 } else if (dep.currentProgress !== undefined) { // Persist currentProgress if provided by evalResult for other types
-                    progressDataToUpdate.currentProgress = dep.currentProgress;
+                    progressDataToUpdate.currentProgress = dep.currentProgress === null ? undefined : dep.currentProgress; // Handle null
                 }
 
                 if (originalDep && (originalDep.isCompleted !== dep.isCompleted || originalDep.currentProgress !== progressDataToUpdate.currentProgress)) {
@@ -184,20 +187,21 @@ export async function PATCH(
               if (evalResult.newQuestStatus !== quest.status) {
                 await tx.questLog.create({
                   data: {
-                    questId: quest.id, userId: session.user!.id,
-                    statusChange: `STATUS_CHANGED_TO_${evalResult.newQuestStatus}`,
-                    details: { reason: "skill_update_trigger", skillId: skillId }
+                    questId: quest.id,
+                    userId: userId, // Use defined userId constant
+                    status: evalResult.newQuestStatus, // Correct field name
+                    note: `Status changed to ${evalResult.newQuestStatus} due to skill update (Skill ID: ${skillId})`, // Correct field name and format
                   }
                 });
                 if (evalResult.newQuestStatus === QuestStatus.COMPLETED) {
-                    const unlocks = await checkAndUnlockAchievements(tx, session.user!.id, "QUEST_COMPLETED", { quest: updatedQuest });
+                    const unlocks = await checkAndUnlockAchievements(tx, userId, "QUEST_COMPLETED", { quest: updatedQuest }); // Use defined userId constant
                     newlyUnlockedQuestAchievements.push(...unlocks);
                 }
               }
           }
         }
       }
-      const newlyUnlockedSkillAchievements = await checkAndUnlockAchievements(tx, session.user!.id, "SKILL_UPDATED", { skill: updatedSkillFromDb });
+      const newlyUnlockedSkillAchievements = await checkAndUnlockAchievements(tx, userId, "SKILL_UPDATED", { skill: updatedSkillFromDb }); // Used userId constant
 
       return {
         updatedSkill: updatedSkillFromDb,

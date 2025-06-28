@@ -81,7 +81,11 @@ export async function GET(req: NextRequest) {
             // Or simply set expected per day if applicable for daily habits shown weekly.
             // For simplicity, if it's a weekly habit shown daily, expected is freq/7 per day.
             // This part can get complex. Let's assume daily habits are expected daily, weekly are expected weekly.
-             if (habit.goalType === HabitGoalType.DAILY) expectedForInterval = habit.frequency;
+            // The erroneous 'if' condition is removed.
+            // If grouping by 'day' for a 'WEEKLY' habit, the daily expectation is not straightforward.
+            // Defaulting to 0 or habit.frequency / 7 could be options.
+            // For now, it will remain 0 as per initial expectedForInterval value if no specific logic is added here.
+            // A more precise calculation might be: expectedForInterval = habit.frequency / 7; (if an average is acceptable)
 
         } else if (habit.goalType === HabitGoalType.TIMES_PER_PERIOD && habit.periodInDays) {
              // This is more complex if groupBy interval doesn't align with periodInDays

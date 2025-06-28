@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
         },
         select: {
           id: true,
-          title: true,
+          name: true, // Changed from title
           completedAt: true,
         },
         orderBy: { completedAt: 'desc' },
@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
 
     const recentCompletionsData = recentUserQuests.map(q => ({
         questId: q.id,
-        questTitle: q.title,
+        questTitle: q.name, // Changed from q.title
         completedAt: q.completedAt!.toISOString(), // Assert non-null due to where clause
     }));
 

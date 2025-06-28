@@ -2,24 +2,24 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/db';
 
-// Interface for Path creation input
-interface PathInput {
+// Interface for SkillTree (Path) creation input
+interface SkillTreeInput {
   name: string;
   description?: string | null;
 }
 
-// Validation function for PathInput
-function validatePathInput(data: any): { isValid: boolean; errors?: any; data?: PathInput } {
+// Validation function for SkillTreeInput
+function validateSkillTreeInput(data: any): { isValid: boolean; errors?: any; data?: SkillTreeInput } {
   if (!data.name || typeof data.name !== 'string' || data.name.trim().length === 0) {
-    return { isValid: false, errors: { name: 'Path name is required.' } };
+    return { isValid: false, errors: { name: 'Skill Tree name is required.' } };
   }
   if (data.description !== undefined && data.description !== null && typeof data.description !== 'string') {
     return { isValid: false, errors: { description: 'Description must be a string.' } };
   }
-  return { isValid: true, data: data as PathInput };
+  return { isValid: true, data: data as SkillTreeInput };
 }
 
-// GET /api/paths - Get all paths for the authenticated user
+// GET /api/paths - Get all SkillTrees (Paths) for the authenticated user
 export async function GET(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -28,24 +28,30 @@ export async function GET(req: NextRequest) {
   const userId = session.user.id;
 
   try {
-    const paths = await prisma.path.findMany({
+    const skillTrees = await prisma.skillTree.findMany({ // Changed from prisma.path
       where: { userId: userId },
       orderBy: { createdAt: 'desc' },
       include: {
-        // Optionally include steps count or a few steps for preview
         _count: {
-          select: { steps: true }
+          select: { nodes: true } // Changed from steps to nodes
         }
       }
     });
-    return NextResponse.json(paths);
+    // If frontend expects 'steps' count, map it
+    const responseData = skillTrees.map(tree => ({
+        ...tree,
+        _count: {
+            steps: tree._count.nodes // Map nodes count to steps count if needed by frontend
+        }
+    }));
+    return NextResponse.json(responseData);
   } catch (error) {
-    console.error('Error fetching paths:', error);
-    return NextResponse.json({ error: 'Failed to fetch paths' }, { status: 500 });
+    console.error('Error fetching skill trees (paths):', error);
+    return NextResponse.json({ error: 'Failed to fetch skill trees (paths)' }, { status: 500 });
   }
 }
 
-// POST /api/paths - Create a new path for the authenticated user
+// POST /api/paths - Create a new SkillTree (Path) for the authenticated user
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -60,7 +66,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON input' }, { status: 400 });
   }
 
-  const validation = validatePathInput(body);
+  const validation = validateSkillTreeInput(body); // Updated validation function name
   if (!validation.isValid || !validation.data) {
     return NextResponse.json({ error: 'Invalid input', details: validation.errors }, { status: 400 });
   }
@@ -68,16 +74,16 @@ export async function POST(req: NextRequest) {
   const { name, description } = validation.data;
 
   try {
-    const newPath = await prisma.path.create({
+    const newSkillTree = await prisma.skillTree.create({ // Changed from prisma.path
       data: {
         userId: userId,
         name: name,
         description: description || null,
       },
     });
-    return NextResponse.json(newPath, { status: 201 });
+    return NextResponse.json(newSkillTree, { status: 201 });
   } catch (error) {
-    console.error('Error creating path:', error);
-    return NextResponse.json({ error: 'Failed to create path' }, { status: 500 });
+    console.error('Error creating skill tree (path):', error);
+    return NextResponse.json({ error: 'Failed to create skill tree (path)' }, { status: 500 });
   }
 }

@@ -8,10 +8,11 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from 'recharts';
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, Cell } from 'recharts'; // Added Cell
 import { ArrowLeft, CalendarRange, Loader2 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { useRouter } from 'next/navigation';
+import toast from 'react-hot-toast'; // Re-add toast import
 
 interface WeekData {
   weekStart: string; // YYYY-MM-DD, Monday of that week
@@ -157,6 +158,3 @@ const WeeklyAnalyticsPage = () => {
 };
 
 export default WeeklyAnalyticsPage;
-
-// Need to import toast for error display
-import toast from 'react-hot-toast';

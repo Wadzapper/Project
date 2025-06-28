@@ -1,15 +1,15 @@
-// Summary: API endpoint to fetch all quests belonging to the same chain as a given questId.
-// It traverses up to find the root and then collects all descendants.
-// TODO: Consider adding an 'orderInChain' field to Quest model for explicit ordering if createdAt is not sufficient.
-// TODO: Add pagination or limits if chains can become excessively long.
+// Summary: API endpoint to fetch details for a given quest, intended to later support chains.
+// NOTE: The current Prisma schema for Quest does not have a direct parentQuestId field.
+// True chain traversal would require using QuestDependency relations.
+// For now, this route will return information about the specified quest only.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/db';
 import { Quest, QuestStatus, QuestType } from '@prisma/client';
 
-// Type for the quests returned in the chain
-type ChainedQuestInfo = Pick<Quest, 'id' | 'title' | 'status' | 'type' | 'parentQuestId' | 'createdAt'>;
+// Type for the quest info returned
+type QuestChainResponseItem = Pick<Quest, 'id' | 'name' | 'status' | 'type' | 'description' | 'createdAt' | 'completedAt' | 'failedAt'>;
 
 export async function GET(
   req: NextRequest,
@@ -27,87 +27,35 @@ export async function GET(
   }
 
   try {
-    // 1. Find the current quest to verify ownership and start traversal
-    let currentQuest = await prisma.quest.findUnique({
+    const quest = await prisma.quest.findUnique({
       where: { id: currentQuestId, userId: userId },
+      // Select fields that exist on the Quest model
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        type: true,
+        description: true,
+        createdAt: true,
+        completedAt: true,
+        failedAt: true,
+        // parentQuestId does not exist, so it's removed.
+        // Dependencies would be fetched if needed for chain logic, but that's more complex.
+      }
     });
 
-    if (!currentQuest) {
+    if (!quest) {
       return NextResponse.json({ error: 'Quest not found or access denied.' }, { status: 404 });
     }
 
-    // 2. Traverse upwards to find the root of the chain
-    let rootQuest = currentQuest;
-    const visitedParentIds = new Set<string>(); // To detect cycles, though parentQuestId should prevent deep cycles
-    while (rootQuest.parentQuestId && !visitedParentIds.has(rootQuest.parentQuestId)) {
-      visitedParentIds.add(rootQuest.id); // Add current id before moving up
-      const parent = await prisma.quest.findUnique({
-        where: { id: rootQuest.parentQuestId, userId: userId }, // Ensure parent also belongs to user
-      });
-      if (parent) {
-        rootQuest = parent;
-      } else {
-        // Parent not found or not owned, means current rootQuest is the effective root for this user's chain segment
-        break;
-      }
-       if (rootQuest.id === rootQuest.parentQuestId) break; // Self-parented is a root
-    }
+    // For now, the "chain" is just the quest itself.
+    // Full chain logic based on QuestDependency would be a future enhancement.
+    const responseData: QuestChainResponseItem[] = [quest];
 
-    // 3. Collect all quests in the chain starting from the root
-    // This involves fetching all quests that have this rootQuest.id as an ancestor,
-    // or all quests that share a common (hypothetical) chainId.
-    // For a simple parentQuestId structure, we can fetch the root and all its direct/indirect children.
-
-    const chainQuests: ChainedQuestInfo[] = [];
-    const queue: Quest[] = [rootQuest];
-    const processedIds = new Set<string>(); // To avoid processing quests multiple times if graph is not strictly a tree
-
-    while (queue.length > 0) {
-      const questToProcess = queue.shift()!; // Non-null assertion as queue.length > 0
-
-      if (processedIds.has(questToProcess.id)) {
-          continue;
-      }
-      processedIds.add(questToProcess.id);
-
-      chainQuests.push({
-        id: questToProcess.id,
-        title: questToProcess.title,
-        status: questToProcess.status,
-        type: questToProcess.type,
-        parentQuestId: questToProcess.parentQuestId,
-        createdAt: questToProcess.createdAt,
-      });
-
-      const children = await prisma.quest.findMany({
-        where: { parentQuestId: questToProcess.id, userId: userId },
-        orderBy: { createdAt: 'asc' }, // Default order for children
-      });
-      queue.push(...children);
-    }
-
-    // Sort the final chain. A common way is by parent linkage then creation time.
-    // For a simple linear chain, sorting by createdAt after finding all members might be enough
-    // if parentQuestId always refers to an older quest.
-    // If there's an explicit orderInChain field, that would be best.
-    // For now, let's sort by createdAt as a baseline.
-    chainQuests.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-
-
-    if (chainQuests.length === 0 && currentQuest) {
-        // If after all processing, the chain is empty but we had a valid currentQuest,
-        // it means it's a standalone quest. Return it as a chain of one.
-         chainQuests.push({
-            id: currentQuest.id, title: currentQuest.title, status: currentQuest.status,
-            type: currentQuest.type, parentQuestId: currentQuest.parentQuestId, createdAt: currentQuest.createdAt
-        });
-    }
-
-
-    return NextResponse.json(chainQuests);
+    return NextResponse.json(responseData);
 
   } catch (error) {
-    console.error(`Error fetching quest chain for quest ${currentQuestId}:`, error);
-    return NextResponse.json({ error: 'Failed to fetch quest chain' }, { status: 500 });
+    console.error(`Error fetching quest (for chain display) ${currentQuestId}:`, error);
+    return NextResponse.json({ error: 'Failed to fetch quest data' }, { status: 500 });
   }
 }

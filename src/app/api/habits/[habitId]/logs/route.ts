@@ -118,52 +118,61 @@ export async function POST(
         },
       });
 
-      // Simplified streak and stats update logic
-      let newCurrentStreak = habit.currentStreak || 0;
-      let newLongestStreak = habit.longestStreak || 0;
-      let newSuccessCount = habit.successCount || 0;
-      let newTotalLogCount = (habit.totalLogCount || 0) + 1;
+      // --- Streak and Stats Update Logic (Commented out for build fix) ---
+      // TODO: Implement robust streak and habit statistics calculation.
+      // This requires adding fields like currentStreak, longestStreak, lastLoggedDate,
+      // successCount, totalLogCount to the Habit model in schema.prisma or calculating them dynamically.
 
-      if (finalIsSuccess) {
-        newSuccessCount += 1;
-        if (habit.lastLoggedDate) {
-          const lastLogDate = new Date(habit.lastLoggedDate);
-          // For DAILY habits, check if consecutive. Other types need more complex logic.
-          if (habit.goalType === HabitGoalType.DAILY && areDatesConsecutive(logDate, lastLogDate)) {
-            newCurrentStreak += 1;
-          } else if (habit.goalType === HabitGoalType.DAILY && isToday(logDate) && isToday(lastLogDate)) {
-            // Logged multiple times today successfully, streak doesn't change from previous day's logic
-            // Or, if it's the first log of today but not consecutive to yesterday, streak remains same as it was.
-            // This logic still needs refinement for perfect streak counting with missed days.
-          }
-           else { // Streak broken or first log
-            newCurrentStreak = 1;
-          }
-        } else { // First successful log
-          newCurrentStreak = 1;
-        }
-      } else { // Log was not a success (e.g., failed a BAD habit, or marked GOOD habit as failed)
-        newCurrentStreak = 0; // Reset streak on failure
-      }
+      // let newCurrentStreak = (habit as any).currentStreak || 0;
+      // let newLongestStreak = (habit as any).longestStreak || 0;
+      // let newSuccessCount = (habit as any).successCount || 0;
+      // let newTotalLogCount = ((habit as any).totalLogCount || 0) + 1;
 
-      if (newCurrentStreak > newLongestStreak) {
-        newLongestStreak = newCurrentStreak;
-      }
+      // if (finalIsSuccess) {
+      //   newSuccessCount += 1;
+      //   if ((habit as any).lastLoggedDate) {
+      //     const lastLogDate = new Date((habit as any).lastLoggedDate);
+      //     if (habit.goalType === HabitGoalType.DAILY && areDatesConsecutive(logDate, lastLogDate)) {
+      //       newCurrentStreak += 1;
+      //     } else {
+      //       newCurrentStreak = 1;
+      //     }
+      //   } else {
+      //     newCurrentStreak = 1;
+      //   }
+      // } else {
+      //   newCurrentStreak = 0;
+      // }
 
-      const habitUpdateData = {
-        currentStreak: newCurrentStreak,
-        longestStreak: newLongestStreak,
-        lastLoggedDate: logDate, // Could be today or a past date from input
-        successCount: newSuccessCount,
-        totalLogCount: newTotalLogCount,
-      };
+      // if (newCurrentStreak > newLongestStreak) {
+      //   newLongestStreak = newCurrentStreak;
+      // }
 
-      const updatedHabitRecord = await tx.habit.update({
-        where: { id: habitId },
-        data: habitUpdateData,
+      // const habitUpdateData = {
+      //   currentStreak: newCurrentStreak,
+      //   longestStreak: newLongestStreak,
+      //   lastLoggedDate: logDate,
+      //   successCount: newSuccessCount,
+      //   totalLogCount: newTotalLogCount,
+      // };
+
+      // For now, we are not updating the Habit model with these stats
+      // const updatedHabitRecord = await tx.habit.update({
+      //   where: { id: habitId },
+      //   data: { updatedAt: new Date() }, // Just update 'updatedAt' or specific fields if needed
+      // });
+      // --- End of Commented out Streak Logic ---
+
+      // Return the created log and the original habit data (or minimally updated habit)
+      // Since we are not updating stats on the habit model for now, we can just return the original habit.
+      // If you add a 'lastLoggedDate' to the Habit model, you could update that here.
+      const minimallyUpdatedHabit = await tx.habit.update({
+          where: { id: habitId },
+          data: { updatedAt: new Date() } // Example: just touch updatedAt
       });
 
-      return [createdLog, updatedHabitRecord];
+
+      return [createdLog, minimallyUpdatedHabit];
     });
 
     return NextResponse.json({ log: newLog, habit: updatedHabit }, { status: 201 });

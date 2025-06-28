@@ -35,8 +35,8 @@ interface Tag {
 interface HabitFormModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (habitData: HabitFormData) => Promise<void>; // onSubmit now expects HabitFormData with tagIds
-  initialData?: Omit<HabitFormData, 'tagIds'> & { tags?: Tag[] }; // initialData might come with populated Tag objects
+  onSubmit: (habitData: HabitFormData) => Promise<void>;
+  initialData?: Omit<HabitFormData, 'tagIds'> & { tags?: string[] }; // Expect tags as string[]
   mode: 'create' | 'edit';
   isLoading?: boolean;
   error?: string | null;
@@ -49,7 +49,7 @@ const defaultFormData: HabitFormData = {
   goalType: HabitGoalType.DAILY,
   frequency: 1,
   periodInDays: null,
-  tagIds: [], // Initialize as empty array
+  tagIds: [],
   archived: false,
 };
 
@@ -65,26 +65,25 @@ export default function HabitFormModal({
   const [formData, setFormData] = useState<HabitFormData>(() => {
     if (mode === 'edit' && initialData) {
       return {
-        ...defaultFormData, // Ensure all fields are present
+        ...defaultFormData,
         ...initialData,
-        tagIds: initialData.tags?.map(tag => tag.id) || [], // Map initial tags to tagIds
+        tagIds: initialData.tags || [], // Directly use string[]
         periodInDays: initialData.goalType === HabitGoalType.TIMES_PER_PERIOD ? initialData.periodInDays : null,
       };
     }
     return defaultFormData;
   });
 
-  const [availableTags, setAvailableTags] = useState<Tag[]>([]);
+  const [availableTags, setAvailableTags] = useState<Tag[]>([]); // Still fetches Tag objects for display
   const [isLoadingTags, setIsLoadingTags] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
-      // Reset form data based on mode and initialData when modal opens or initialData changes
       if (mode === 'edit' && initialData) {
         setFormData({
           ...defaultFormData,
           ...initialData,
-          tagIds: initialData.tags?.map(tag => tag.id) || [],
+          tagIds: initialData.tags || [], // Directly use string[]
           periodInDays: initialData.goalType === HabitGoalType.TIMES_PER_PERIOD ? initialData.periodInDays : null,
         });
       } else {

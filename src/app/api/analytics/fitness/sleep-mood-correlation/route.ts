@@ -38,7 +38,10 @@ export async function GET(req: NextRequest) {
       where: {
         userId,
         date: { gte: startDate, lte: veryEndDate },
-        mood: { not: null }, // Only include days where mood was rated
+        // Correct way to filter for non-null values for an optional Int field
+        // if `not: null` causes type errors due to overly strict generated types.
+        // This assumes mood scores are integers.
+        mood: { gte: Number.MIN_SAFE_INTEGER },
       },
       select: { date: true, mood: true },
       orderBy: { date: 'asc' },
@@ -49,7 +52,8 @@ export async function GET(req: NextRequest) {
     const moodMap = new Map(dailyRatings.map(rating => [formatISO(rating.date, { representation: 'date' }), rating.mood]));
 
     const combinedData: { date: string; sleepQuality: number | null; mood: number | null }[] = [];
-    const allDates = new Set([...sleepMap.keys(), ...moodMap.keys()]);
+    // Explicitly convert iterators to arrays before spreading
+    const allDates = new Set([...Array.from(sleepMap.keys()), ...Array.from(moodMap.keys())]);
 
     const sortedDates = Array.from(allDates).sort((a,b) => new Date(a).getTime() - new Date(b).getTime());
 

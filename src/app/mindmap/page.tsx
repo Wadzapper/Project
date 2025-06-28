@@ -9,7 +9,8 @@
 'use client';
 
 import React, { useCallback, useEffect, useState, useMemo } from 'react';
-import ReactFlow, {
+import {
+  ReactFlow,
   MiniMap,
   Controls,
   Background,
@@ -23,8 +24,8 @@ import ReactFlow, {
   EdgeChange,
   Position,
   MarkerType,
-} from 'reactflow';
-import 'reactflow/dist/style.css'; // Default styles are important
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css'; // Default styles are important
 
 import { Loader2, AlertTriangle, Brain } from 'lucide-react';
 import { Skill, SkillTree, SkillTreeNode } from '@prisma/client'; // Assuming these types
@@ -135,7 +136,7 @@ const MindmapPage = () => {
 
     // Simple auto-layout: BFS-like approach for positioning
     const layoutNodes = (treeNodes: SkillTreeNodeWithSkill[]) => {
-        const rootNodes = treeNodes.filter(n => !n.parentId);
+        const rootNodes = treeNodes.filter(n => !n.parentNodeId); // Corrected to parentNodeId
         const positioned = new Set<string>();
         const queue: Array<{ nodeId: string, x: number, y: number, level: number }> = [];
 
@@ -150,7 +151,7 @@ const MindmapPage = () => {
         let head = 0;
         while(head < queue.length) {
             const current = queue[head++];
-            const children = treeNodes.filter(n => n.parentId === current.nodeId && !positioned.has(n.id));
+            const children = treeNodes.filter(n => n.parentNodeId === current.nodeId && !positioned.has(n.id)); // Corrected to parentNodeId
 
             children.forEach((child, index) => {
                 // Basic horizontal spread for children
@@ -177,7 +178,7 @@ const MindmapPage = () => {
       rfNodes.push({
         id: node.id, // Use SkillTreeNode id as reactflow node id
         data: {
-            label: node.customName || skillInfo?.name || 'Unnamed Skill',
+            label: (node.metadata as any)?.customName || skillInfo?.name || 'Unnamed Skill', // Check metadata for customName
             skillData: skillInfo // Store full skill data for tooltips etc.
         },
         position: nodePositions[node.id] || { x: Math.random() * 400, y: Math.random() * 400 }, // Fallback position
@@ -186,10 +187,10 @@ const MindmapPage = () => {
         targetPosition: Position.Top,
       });
 
-      if (node.parentId) {
+      if (node.parentNodeId) { // Corrected to parentNodeId
         rfEdges.push({
-          id: `e-${node.parentId}-${node.id}`,
-          source: node.parentId,
+          id: `e-${node.parentNodeId}-${node.id}`,
+          source: node.parentNodeId, // Corrected to parentNodeId
           target: node.id,
           type: 'smoothstep',
           markerEnd: { type: MarkerType.ArrowClosed, color: '#a0aec0' },

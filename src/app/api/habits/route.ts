@@ -10,7 +10,7 @@ interface HabitInput {
   goalType: HabitGoalType;
   frequency: number;
   periodInDays?: number | null;
-  tagIds?: string[]; // Changed from tags: string[] to tagIds: string[]
+  tags?: string[]; // Expecting string array for tags directly
 }
 
 function validateHabitInput(data: any): { isValid: boolean; errors?: any; data?: HabitInput } {
@@ -29,9 +29,8 @@ function validateHabitInput(data: any): { isValid: boolean; errors?: any; data?:
   if (data.goalType === HabitGoalType.TIMES_PER_PERIOD && (data.periodInDays === undefined || typeof data.periodInDays !== 'number' || data.periodInDays <= 0)) {
     return { isValid: false, errors: { periodInDays: 'Period (in days) is required for TIMES_PER_PERIOD goal type and must be positive.'}};
   }
-  // Validate tagIds if provided
-  if (data.tagIds !== undefined && (!Array.isArray(data.tagIds) || !data.tagIds.every((id: any) => typeof id === 'string'))) {
-    return { isValid: false, errors: { tagIds: 'tagIds must be an array of strings.' } };
+  if (data.tags !== undefined && (!Array.isArray(data.tags) || !data.tags.every((tag: any) => typeof tag === 'string'))) {
+    return { isValid: false, errors: { tags: 'tags must be an array of strings.' } };
   }
   return { isValid: true, data: data as HabitInput };
 }
@@ -44,55 +43,26 @@ export async function GET(req: NextRequest) {
   }
 
   const { searchParams } = new URL(req.url);
-  const archivedParam = searchParams.get('archived'); // "true" or "false"
+  const archivedParam = searchParams.get('archived');
   const typeParam = searchParams.get('type') as HabitType | null;
 
   const whereClause: any = { userId: session.user.id };
   if (archivedParam === 'true') {
     whereClause.archived = true;
-  } else if (archivedParam === 'false') {
+  } else if (archivedParam === 'false' || archivedParam === null) { // Default to non-archived if not specified or explicitly false
     whereClause.archived = false;
-  } // If not specified, fetch all (both archived and not) or default to non-archived.
-    // For now, let's default to fetching non-archived unless specified.
-    else if (archivedParam === null) { // only apply if param is missing
-        whereClause.archived = false;
-    }
-
+  }
 
   if (typeParam && Object.values(HabitType).includes(typeParam)) {
     whereClause.type = typeParam;
   }
 
   try {
-    const habitsFromDb = await prisma.habit.findMany({ // Renamed to avoid conflict
+    const habitsFromDb = await prisma.habit.findMany({
       where: whereClause,
       orderBy: { createdAt: 'desc' },
-      // Include all necessary fields directly. The streak/count fields are on the Habit model itself.
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        type: true,
-        goalType: true,
-        frequency: true,
-        periodInDays: true,
-        // tags: true, // This was the old string array field, will be removed from schema
-        archived: true,
-        createdAt: true,
-        updatedAt: true,
-        currentStreak: true,
-        longestStreak: true,
-        successCount: true,
-        totalLogCount: true,
-        lastLoggedDate: true,
-        habitTags: { // Include linked tags
-          select: {
-            tag: {
-              select: { id: true, name: true, color: true }
-            }
-          }
-        },
-        _count: { // For loggedToday
+      include: { // Include count of successful logs for today
+        _count: {
           select: {
             logs: {
               where: {
@@ -100,7 +70,7 @@ export async function GET(req: NextRequest) {
                   gte: new Date(new Date().setHours(0, 0, 0, 0)),
                   lt: new Date(new Date().setHours(23, 59, 59, 999)),
                 },
-                isSuccess: true,
+                isSuccess: true, // Consider only successful logs for "loggedToday"
               },
             },
           },
@@ -108,20 +78,17 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    const habitsWithStatusAndTags = habitsFromDb.map(habit => {
-      let loggedToday = false;
-      if (habit.goalType === HabitGoalType.DAILY) {
-        loggedToday = habit._count.logs > 0;
-      }
-      const { _count, habitTags, ...habitData } = habit;
+    // Add a 'loggedToday' field based on the count of successful logs for today
+    const habitsWithLoggedToday = habitsFromDb.map(habit => {
+      const { _count, ...habitData } = habit;
       return {
         ...habitData,
-        loggedToday,
-        tags: habitTags.map(ht => ht.tag) // Flatten to simple array of Tag objects
+        loggedToday: (_count?.logs ?? 0) > 0,
+        // tags are already part of habitData as String[]
       };
     });
 
-    return NextResponse.json(habitsWithStatusAndTags);
+    return NextResponse.json(habitsWithLoggedToday);
   } catch (error) {
     console.error('Error fetching habits:', error);
     return NextResponse.json({ error: 'Failed to fetch habits' }, { status: 500 });
@@ -147,22 +114,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid input', details: validation.errors }, { status: 400 });
   }
 
-  const { name, description, type, goalType, frequency, periodInDays, tagIds } = validation.data; // Use tagIds
+  const { name, description, type, goalType, frequency, periodInDays, tags } = validation.data;
 
   try {
-    // Validate tagIds if provided
-    if (tagIds && tagIds.length > 0) {
-      const tagsExistCount = await prisma.tag.count({
-        where: {
-          id: { in: tagIds },
-          userId: session.user.id, // Ensure tags belong to the user
-        },
-      });
-      if (tagsExistCount !== tagIds.length) {
-        return NextResponse.json({ error: 'One or more provided tag IDs are invalid or do not belong to the user.' }, { status: 400 });
-      }
-    }
-
     const newHabit = await prisma.habit.create({
       data: {
         userId: session.user.id,
@@ -172,21 +126,9 @@ export async function POST(req: NextRequest) {
         goalType,
         frequency,
         periodInDays: goalType === HabitGoalType.TIMES_PER_PERIOD ? periodInDays : null,
-        // tags: tags || [], // Old string array tags
-        // Connect to tags via HabitTag join table
-        habitTags: tagIds && tagIds.length > 0
-          ? {
-              create: tagIds.map(tagId => ({
-                tagId: tagId,
-                assignedBy: session.user.id!, // User assigning the tag
-              })),
-            }
-          : undefined,
-        currentStreak: 0,
-        longestStreak: 0,
-        successCount: 0,
-        totalLogCount: 0,
-        lastLoggedDate: null,
+        tags: tags || [], // Assign the string array directly
+        // Fields like currentStreak, longestStreak, etc., are not on the model
+        // and should be calculated or handled elsewhere if needed.
       },
     });
     return NextResponse.json(newHabit, { status: 201 });

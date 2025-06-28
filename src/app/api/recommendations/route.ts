@@ -30,9 +30,9 @@ const predefinedHabitSuggestions: Omit<RecommendedItem, 'id' | 'linkedSkills' | 
 
 // Predefined Quest Suggestions for MVP (if no skill-based can be found)
 const predefinedQuestSuggestions: Omit<RecommendedItem, 'id' | 'linkedSkills' | 'isTemplate' >[] = [
-    { name: "Plan Your Week", description: "Outline your tasks and goals for the upcoming week.", type: QuestType.WEEKLY_TARGET, xpReward: 50 },
-    { name: "Learn a New Recipe", description: "Cook a dish you've never tried before.", type: QuestType.ONE_TIME, xpReward: 75 },
-    { name: "30-Minute Focus Block", description: "Dedicate 30 minutes of uninterrupted work on a key task.", type: QuestType.DAILY_TASK, xpReward: 25 },
+    { name: "Plan Your Week", description: "Outline your tasks and goals for the upcoming week.", type: QuestType.MANUAL, xpReward: 50 }, // Was WEEKLY_TARGET
+    { name: "Learn a New Recipe", description: "Cook a dish you've never tried before.", type: QuestType.MANUAL, xpReward: 75 }, // Was ONE_TIME
+    { name: "30-Minute Focus Block", description: "Dedicate 30 minutes of uninterrupted work on a key task.", type: QuestType.MANUAL, xpReward: 25 }, // Was DAILY_TASK
 ];
 
 
@@ -91,10 +91,10 @@ export async function GET(req: NextRequest) {
 
         skillBasedQuests = potentialQuests.map(q => ({
           id: q.id,
-          name: q.title,
+          name: q.name, // Changed from q.title
           description: q.description,
           type: q.type,
-          xpReward: q.xpReward,
+          // xpReward: q.xpReward, // xpReward is not a direct field on Quest model
           linkedSkills: q.dependencies
             .filter(dep => dep.skillId && weakestSkillIds.includes(dep.skillId))
             .map(dep => dep.skill!) // skill should be present due to include

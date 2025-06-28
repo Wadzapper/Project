@@ -1,18 +1,20 @@
 // Summary: API endpoint for Tag Analytics.
 // Returns a list of user's tags with counts of associated habits and quests.
-// Assumes Tag model and M-M relations (HabitTag, QuestTag) are defined in Prisma schema.
-// TODO: Add filtering for habits/quests (e.g., only count non-archived items).
+// NOTE: The current Prisma schema stores tags as string arrays on Habit and JournalEntry models.
+// There is no separate Tag model. This route needs to be updated to reflect that schema.
+// For now, to fix the build, it will return an empty array.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/db';
 
 interface TagAnalyticsData {
-  id: string;
+  id: string; // Tag name will be used as ID for now
   name: string;
-  color: string | null;
+  color: string | null; // Color is not available with current schema for string tags
   habitCount: number;
-  questCount: number;
+  questCount: number; // Quests also don't have tags in current schema
+  journalEntryCount: number;
 }
 
 export async function GET(req: NextRequest) {
@@ -23,41 +25,55 @@ export async function GET(req: NextRequest) {
   const userId = session.user.id;
 
   try {
-    const userTags = await prisma.tag.findMany({
-      where: { userId: userId },
-      include: {
-        _count: {
-          select: {
-            habits: true, // Counts records in HabitTag linking to this tag
-            quests: true, // Counts records in QuestTag linking to this tag
-          },
-        },
-      },
-      orderBy: {
-        name: 'asc', // Or by usage count, etc.
-      },
+    // Since there's no Tag model, we need to aggregate tags from models that use them.
+    // For now, returning an empty array to ensure the build passes.
+    // Actual implementation will require fetching Habits, JournalEntries, etc.,
+    // and then processing their `tags: String[]` fields.
+
+    const habits = await prisma.habit.findMany({
+        where: { userId },
+        select: { tags: true }
     });
 
-    const analyticsData: TagAnalyticsData[] = userTags.map(tag => ({
-      id: tag.id,
-      name: tag.name,
-      color: tag.color || null,
-      habitCount: tag._count.habits,
-      questCount: tag._count.quests,
-    }));
+    const journalEntries = await prisma.journalEntry.findMany({
+        where: { userId },
+        select: { tags: true }
+    });
+
+    const tagMap = new Map<string, { name: string, habitCount: number, questCount: number, journalEntryCount: number }>();
+
+    habits.forEach(habit => {
+        habit.tags.forEach(tagName => {
+            const tag = tagMap.get(tagName) || { name: tagName, habitCount: 0, questCount: 0, journalEntryCount: 0 };
+            tag.habitCount++;
+            tagMap.set(tagName, tag);
+        });
+    });
+
+    journalEntries.forEach(entry => {
+        entry.tags.forEach(tagName => {
+            const tag = tagMap.get(tagName) || { name: tagName, habitCount: 0, questCount: 0, journalEntryCount: 0 };
+            tag.journalEntryCount++;
+            tagMap.set(tagName, tag);
+        });
+    });
+
+    // Note: Quests do not have a tags field in the current schema. QuestCount will be 0.
+
+    const analyticsData: TagAnalyticsData[] = Array.from(tagMap.values()).map(tag => ({
+        id: tag.name, // Using name as ID since there's no separate Tag model
+        name: tag.name,
+        color: null, // Color information isn't stored with string tags
+        habitCount: tag.habitCount,
+        questCount: tag.questCount,
+        journalEntryCount: tag.journalEntryCount,
+    })).sort((a, b) => a.name.localeCompare(b.name));
+
 
     return NextResponse.json(analyticsData);
 
   } catch (error) {
-    console.error('Error fetching tag analytics:', error);
-    // Check if error is due to missing Tag table (e.g. PrismaClientKnownRequestError P2021)
-    // This might happen if schema changes weren't actually applied.
-    if ((error as any)?.code === 'P2021' || (error as any)?.message?.includes("Table `main.Tag` doesn't exist")) {
-         return NextResponse.json({
-            error: 'Tag feature might not be fully set up in the database schema.',
-            details: "Required tables (Tag, HabitTag, QuestTag) may be missing."
-        }, { status: 501 }); // Not Implemented / Misconfigured
-    }
-    return NextResponse.json({ error: 'Failed to fetch tag analytics' }, { status: 500 });
+    console.error('Error processing tag analytics:', error);
+    return NextResponse.json({ error: 'Failed to process tag analytics' }, { status: 500 });
   }
 }

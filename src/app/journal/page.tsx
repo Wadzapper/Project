@@ -1,25 +1,23 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import JournalEntryCard from '@/components/journal/JournalEntryCard';
 import JournalEntryFormModal, { JournalEntryFormData } from '@/components/journal/JournalEntryFormModal';
 import DailyRatingForm from '@/components/ratings/DailyRatingForm';
-import RecentRatingsDisplay from '@/components/ratings/RecentRatingsDisplay'; // Import RecentRatingsDisplay
+import RecentRatingsDisplay from '@/components/ratings/RecentRatingsDisplay';
 import { useSession } from 'next-auth/react';
-
+import { Button } from '@/components/ui/button';
+import { PlusCircle, Loader2 } from 'lucide-react';
 
 export interface JournalEntryDisplay {
   id: string;
   title: string;
   content: string;
-  date: string; // ISO string
+  date: string;
   tags: string[];
   createdAt: string;
-  // linkedSkillIds?: string[];
-  // linkedQuestIds?: string[];
-  // linkedAchievementIds?: string[];
 }
 
 export default function JournalPage() {
@@ -27,22 +25,20 @@ export default function JournalPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [pageMessage, setPageMessage] = useState<{ type: 'error' | 'success', text: string } | null>(null);
 
-  // Modal State (to be used with JournalEntryFormModal)
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
-  const [currentEntryForModal, setCurrentEntryForModal] = useState<any | null>(null); // Will be JournalEntryFormData
+  const [currentEntryForModal, setCurrentEntryForModal] = useState<JournalEntryFormData | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const router = useRouter();
   const { data: session, status: sessionStatus } = useSession();
-  // sessionStatus can be 'loading', 'authenticated', 'unauthenticated'
 
-  const fetchJournalEntries = async () => {
+  const fetchJournalEntries = useCallback(async () => {
     setIsLoading(true);
     setPageMessage(null);
     try {
-      const response = await fetch('/api/journal'); // Add filters later if needed
+      const response = await fetch('/api/journal');
       if (!response.ok) {
         const errData = await response.json();
         throw new Error(errData.error || 'Failed to fetch journal entries');
@@ -56,11 +52,15 @@ export default function JournalPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchJournalEntries();
-  }, []);
+    if (sessionStatus === 'authenticated') {
+      fetchJournalEntries();
+    } else if (sessionStatus === 'unauthenticated') {
+      setIsLoading(false);
+    }
+  }, [sessionStatus, fetchJournalEntries]);
 
   const handleOpenCreateModal = () => {
     setModalMode('create');
@@ -76,11 +76,8 @@ export default function JournalPage() {
         id: entry.id,
         title: entry.title,
         content: entry.content,
-        date: new Date(entry.date).toISOString().split('T')[0], // Ensure YYYY-MM-DD
+        date: new Date(entry.date).toISOString().split('T')[0],
         tags: entry.tags || [],
-        // linkedSkillIds: entry.linkedSkillIds || [], // Add if these become part of form
-        // linkedQuestIds: entry.linkedQuestIds || [],
-        // linkedAchievementIds: entry.linkedAchievementIds || [],
     });
     setFormError(null);
     setIsModalOpen(true);
@@ -115,8 +112,6 @@ export default function JournalPage() {
       toast.success(`Journal entry ${modalMode === 'create' ? 'created' : 'updated'} successfully!`);
       handleCloseModal();
       fetchJournalEntries();
-      router.refresh();
-
     } catch (error: any) {
       setFormError(error.message || 'An unexpected error occurred.');
       toast.error(error.message || 'An unexpected error occurred.');
@@ -134,47 +129,57 @@ export default function JournalPage() {
                   throw new Error(err.error || "Failed to delete entry");
               }
               toast.success("Entry deleted!");
-              fetchJournalEntries(); // Refresh
+              fetchJournalEntries();
           } catch(e: any) {
               toast.error(e.message || "Could not delete entry.");
           }
       }
   };
 
+  if (sessionStatus === 'loading' || (isLoading && sessionStatus === 'authenticated')) {
+    return <div className="container mx-auto px-4 py-8 text-center text-text-secondary flex items-center justify-center h-screen"><Loader2 className="mr-2 h-6 w-6 animate-spin"/>Loading journal...</div>;
+  }
 
-  if (isLoading) {
-    return <div className="container mx-auto px-4 py-8 text-center">Loading journal entries...</div>;
+  if (sessionStatus === 'unauthenticated') {
+    return <div className="container mx-auto px-4 py-8 text-center text-text-secondary">Please log in to view your journal.</div>;
   }
 
   return (
     <div className="container mx-auto px-4 py-8">
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">My Journal</h1>
-        <button
-          onClick={handleOpenCreateModal}
-          className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-600"
-          aria-label="Create New Journal Entry"
-        >
-          + New Entry
-        </button>
+      <div className="flex flex-col sm:flex-row justify-between items-center mb-8 gap-2">
+        <h1 className="text-3xl font-bold text-text-primary">My Journal</h1>
+        {sessionStatus === 'authenticated' && (
+            <Button
+              onClick={handleOpenCreateModal}
+              aria-label="Create New Journal Entry"
+            >
+              <PlusCircle className="mr-2 h-4 w-4"/> New Entry
+            </Button>
+        )}
       </div>
 
       {pageMessage && (
-        <div className={`p-4 mb-4 text-sm rounded-lg ${pageMessage.type === 'error' ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200' : 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-200'}`}role="alert">
+        <div
+            className={`p-4 mb-4 text-sm rounded-lg ${
+                pageMessage.type === 'error'
+                ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200'
+                : 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-200'
+            }`}
+            role="alert"
+        >
           {pageMessage.text}
         </div>
       )}
 
-      {/* TODO: Add Filter/Search Bar and Sort Toggle here */}
-
-      {entries.length === 0 && !isLoading ? (
-        <div className="p-10 text-center bg-white rounded-lg shadow-md dark:bg-gray-800">
-          <h3 className="text-xl font-semibold text-gray-700 dark:text-gray-300">No Journal Entries Yet</h3>
-          <p className="mt-2 text-gray-500 dark:text-gray-400">Start writing to fill this space with your thoughts and reflections!</p>
+      {!isLoading && entries.length === 0 && sessionStatus === 'authenticated' && (
+        <div className="p-10 text-center bg-bg-card rounded-lg shadow-md">
+          <h3 className="text-xl font-semibold text-text-primary">No Journal Entries Yet</h3>
+          <p className="mt-2 text-text-secondary">Start writing to fill this space with your thoughts and reflections!</p>
         </div>
-      ) : (
-        <div className="space-y-6">
-          {/* Grouping by month to be implemented later */}
+      )}
+
+      {entries.length > 0 && (
+        <div className="space-y-6 mt-6">
           {entries.map((entry) => (
             <JournalEntryCard
               key={entry.id}
@@ -186,40 +191,28 @@ export default function JournalPage() {
         </div>
       )}
 
-      {/*
-      <JournalEntryFormModal
-        isOpen={isModalOpen}
-        onClose={handleCloseModal}
-        onSubmit={handleSubmitEntry} // This will be created next
-        initialData={currentEntryForModal}
-        mode={modalMode}
-        isLoading={isSubmitting}
-        error={formError}
-      />
-      <JournalEntryFormModal
-        isOpen={isModalOpen}
-        onClose={handleCloseModal}
-        onSubmit={handleSubmitEntry}
-        initialData={currentEntryForModal}
-        mode={modalMode}
-        isLoading={isSubmitting}
-        error={formError}
-      />
+      {isModalOpen && (
+        <JournalEntryFormModal
+          isOpen={isModalOpen}
+          onClose={handleCloseModal}
+          onSubmit={handleSubmitEntry}
+          initialData={currentEntryForModal}
+          mode={modalMode}
+          isLoading={isSubmitting}
+          error={formError}
+        />
+      )}
 
       {session?.user?.id && (
-        <div className="mt-12 space-y-8"> {/* Add some spacing & container for ratings section */}
+        <div className="mt-12 space-y-8">
+          <div className="mb-6"> {/* Replaced SectionHeader */}
+            <h2 className="text-2xl font-semibold text-text-primary">Daily Ratings</h2>
+            <p className="mt-1 text-sm text-text-secondary">Rate your day across key metrics.</p>
+          </div>
           <DailyRatingForm
             userId={session.user.id}
-            // To refresh RecentRatingsDisplay when a new rating is saved by DailyRatingForm:
-            // One way is to lift a 'refreshTrigger' state up or use a pub/sub or context.
-            // For simplicity now, RecentRatingsDisplay fetches on its own mount.
-            // A full page router.refresh() in DailyRatingForm's onSubmit would also work
-            // if DailyRatingForm was part of this component, or pass a callback to trigger fetch.
             onRatingSaved={() => {
-                // Potentially trigger a re-fetch in RecentRatingsDisplay if it were a sibling managed here
-                // Or if RecentRatingsDisplay has its own internal refresh mechanism based on a prop
-                // For now, this callback isn't directly making RecentRatingsDisplay refetch without more setup.
-                // A simple router.refresh() after saving in DailyRatingForm would make the whole page re-evaluate.
+                toast.success("Rating saved! Recent ratings might take a moment to update.");
             }}
           />
           <RecentRatingsDisplay userId={session.user.id} />

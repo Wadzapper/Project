@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/db';
-import { QuestStatus, QuestType, QuestDependencyType } from '@prisma/client'; // Import enums
+import { QuestStatus, QuestType, QuestDependencyType, Prisma } from '@prisma/client'; // Import enums and Prisma
 
 // Basic validation (can be expanded or use Zod)
 interface QuestDependencyInput {
@@ -11,16 +11,14 @@ interface QuestDependencyInput {
   targetSkillLevel?: number;
   targetSkillXp?: number;
   targetDate?: string; // ISO date string
-  // currentProgress: 0, // Defaulted in schema or by logic
-  // isCompleted: false, // Defaulted in schema
 }
 
 interface QuestInput {
-  name: string;
+  name: string; // Changed from title to name to match Prisma model
   description?: string;
   type: QuestType;
   dependencies?: QuestDependencyInput[];
-  tagIds?: string[]; // Added for tags
+  // tagIds removed as Quest model has no tags
 }
 
 function validateQuestInput(data: QuestInput): { isValid: boolean; errors?: any; data?: QuestInput } {
@@ -35,14 +33,13 @@ function validateQuestInput(data: QuestInput): { isValid: boolean; errors?: any;
       if (!dep.type || !Object.values(QuestDependencyType).includes(dep.type)) {
         return { isValid: false, errors: { dependencies: `Invalid dependency type: ${dep.type}` } };
       }
-      if ((dep.type === QuestDependencyType.SKILL_TARGET_LEVEL || dep.type === QuestDependencyType.SKILL_XP_GAINED_TOTAL || dep.type === QuestDependencyType.SKILL_XP_GAINED_RELATIVE) && !dep.skillId) {
+      // Corrected SKILL_TARGET_LEVEL to SKILL_LEVEL_REACHED
+      if ((dep.type === QuestDependencyType.SKILL_LEVEL_REACHED || dep.type === QuestDependencyType.SKILL_XP_GAINED_TOTAL || dep.type === QuestDependencyType.SKILL_XP_GAINED_RELATIVE) && !dep.skillId) {
         return { isValid: false, errors: { dependencies: `Skill ID is required for skill-based dependency type ${dep.type}` }};
       }
     }
   }
-  if (data.tagIds !== undefined && (!Array.isArray(data.tagIds) || !data.tagIds.every((id: any) => typeof id === 'string'))) {
-    return { isValid: false, errors: { tagIds: 'tagIds must be an array of strings.' } };
-  }
+  // tagIds validation removed
   return { isValid: true, data };
 }
 
@@ -53,80 +50,62 @@ export async function GET(req: NextRequest) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const userId = session.user.id;
 
   const { searchParams } = new URL(req.url);
   const statusParam = searchParams.get('status');
-  const tagIdsParam = searchParams.get('tagIds');
-  const skillIdsParam = searchParams.get('skillIds');
-  const isChainedParam = searchParams.get('isChained'); // "true" or "false"
+  // tagIdsParam removed
+  const skillIdsParam = searchParams.get('skillIds'); // Corrected from skillId to skillIdsParam
+  const isChainedParam = searchParams.get('isChained');
 
-  const whereClause: any = { userId: session.user.id };
+  const whereClause: Prisma.QuestWhereInput = { userId: userId }; // Use Prisma.QuestWhereInput for type safety
 
   if (statusParam && Object.values(QuestStatus).includes(statusParam as QuestStatus)) {
     whereClause.status = statusParam as QuestStatus;
   } else if (statusParam?.toUpperCase() === 'ALL') {
-    // No status filter, fetch all
-  } else if (!statusParam) {
-    // Default to IN_PROGRESS if no status is provided, as per original logic
-    // whereClause.status = QuestStatus.IN_PROGRESS;
-    // Or remove default to truly fetch all if no status is specified.
-    // For now, let's keep the "ALL" or specific status logic. If no status, no filter by it.
-  }
+    // No status filter
+  } // If no statusParam, no filter on status by default
 
-
-  if (tagIdsParam) {
-    const tagIdsArray = tagIdsParam.split(',').filter(id => id.trim() !== '');
-    if (tagIdsArray.length > 0) {
-      // Filter for quests that have at least one of the specified tags (OR logic)
-      whereClause.questTags = { some: { tagId: { in: tagIdsArray } } };
-    }
-  }
+  // tagIdsParam logic removed
 
   if (skillIdsParam) {
     const skillIdsArray = skillIdsParam.split(',').filter(id => id.trim() !== '');
     if (skillIdsArray.length > 0) {
-      // Filter for quests that have a dependency on at least one of the specified skills
       whereClause.dependencies = { some: { skillId: { in: skillIdsArray } } };
     }
   }
 
-  if (isChainedParam === 'true') {
-    whereClause.parentQuestId = { not: null };
-  } else if (isChainedParam === 'false') {
-    whereClause.parentQuestId = null;
-  }
-  // If isChainedParam is not 'true' or 'false', no filter on parentQuestId is applied.
+  // parentQuestId does not exist on Quest model, removing this filter logic
+  // if (isChainedParam === 'true') {
+  //   whereClause.parentQuestId = { not: null };
+  // } else if (isChainedParam === 'false') {
+  //   whereClause.parentQuestId = null;
+  // }
 
   try {
     const quests = await prisma.quest.findMany({
       where: whereClause,
       include: {
-        dependencies: { include: { skill: { select: { id: true, name: true } } } }, // Also include skill name in dependency
-        questTags: { // Include linked tags
-          select: {
-            tag: {
-              select: { id: true, name: true, color: true }
-            }
-          }
-        }
+        dependencies: { include: { skill: { select: { id: true, name: true } } } },
+        // questTags removed
       },
       orderBy: { createdAt: 'desc' },
     });
 
-    const questsWithTags = quests.map(quest => {
-      const { questTags, dependencies, ...questData } = quest;
+    // Adjust mapping as questTags are removed
+    const responseData = quests.map(quest => {
+      const { dependencies, ...questData } = quest; // Removed questTags from destructuring
       return {
         ...questData,
-        // Map dependencies to include skill name if skill exists
         dependencies: dependencies.map(dep => ({
             ...dep,
-            skillName: dep.skill?.name // Add skillName if skill is populated
+            skillName: dep.skill?.name
         })),
-        tags: questTags.map(qt => qt.tag)
+        // tags: [] // Quest model doesn't have tags, return empty or omit
       };
     });
 
-    return NextResponse.json(questsWithTags);
+    return NextResponse.json(responseData);
   } catch (error) {
     console.error('Error fetching quests:', error);
     return NextResponse.json({ error: 'Failed to fetch quests' }, { status: 500 });
@@ -139,6 +118,7 @@ export async function POST(req: NextRequest) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const userId = session.user.id;
 
   let body: QuestInput;
   try {
@@ -152,52 +132,35 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid input', details: validation.errors }, { status: 400 });
   }
 
-  const { name, description, type, dependencies, tagIds } = validation.data; // Added tagIds
+  const { name, description, type, dependencies } = validation.data; // Removed tagIds
 
   try {
-    // Validate tagIds if provided
-    if (tagIds && tagIds.length > 0) {
-      const tagsExistCount = await prisma.tag.count({
-        where: {
-          id: { in: tagIds },
-          userId: session.user.id, // Ensure tags belong to the user
-        },
-      });
-      if (tagsExistCount !== tagIds.length) {
-        return NextResponse.json({ error: 'One or more provided tag IDs are invalid or do not belong to the user.' }, { status: 400 });
-      }
-    }
+    // tagIds validation and linking logic removed
 
     const newQuestWithDetails = await prisma.$transaction(async (tx) => {
       const createdQuest = await tx.quest.create({
         data: {
-          userId: session.user.id,
-          name, // Use title from input
-          title: name, // Prisma model uses 'title', QuestInput used 'name'. Aligning.
+          userId: userId,
+          name, // Prisma model uses 'name'
           description: description || null,
           type,
           status: QuestStatus.PENDING,
-          // Handle tags connection
-          questTags: tagIds && tagIds.length > 0
-            ? {
-                create: tagIds.map(tagId => ({
-                  tagId: tagId,
-                  assignedBy: session.user.id!,
-                })),
-              }
-            : undefined,
+          // questTags logic removed
         },
       });
 
       if (dependencies && dependencies.length > 0) {
         for (const depInput of dependencies) {
           let initialSkillXpForDep: number | undefined = undefined;
-          if (depInput.type === QuestDependencyType.SKILL_XP_GAINED_RELATIVE && depInput.skillId) {
-            const skill = await tx.skill.findUnique({ where: { id: depInput.skillId, userId: session.user!.id } });
+          // Corrected SKILL_TARGET_LEVEL to SKILL_LEVEL_REACHED
+          if ((depInput.type === QuestDependencyType.SKILL_LEVEL_REACHED || depInput.type === QuestDependencyType.SKILL_XP_GAINED_RELATIVE) && depInput.skillId) {
+            const skill = await tx.skill.findUnique({ where: { id: depInput.skillId, userId: userId } });
             if (skill) {
-              initialSkillXpForDep = skill.currentXp;
+              if (depInput.type === QuestDependencyType.SKILL_XP_GAINED_RELATIVE) {
+                 initialSkillXpForDep = skill.currentXp;
+              }
             } else {
-              throw new Error(`Skill with ID ${depInput.skillId} not found for relative XP dependency.`);
+              throw new Error(`Skill with ID ${depInput.skillId} not found for dependency.`);
             }
           }
           await tx.questDependency.create({
@@ -216,12 +179,11 @@ export async function POST(req: NextRequest) {
           });
         }
       }
-      // Re-fetch the quest with its dependencies and tags to return the full object
       return tx.quest.findUnique({
         where: { id: createdQuest.id },
         include: {
           dependencies: true,
-          questTags: { include: { tag: true } }
+          // questTags removed
         }
       });
     });
@@ -230,15 +192,17 @@ export async function POST(req: NextRequest) {
         throw new Error("Quest creation failed after transaction.");
     }
 
-    const { questTags, ...questData } = newQuestWithDetails;
+    // Adjust response as questTags are removed
+    const { ...questData } = newQuestWithDetails;
     const responseData = {
         ...questData,
-        tags: questTags.map(qt => qt.tag)
+        // tags: [] // Quest model doesn't have tags
     };
+
 
     return NextResponse.json(responseData, { status: 201 });
   } catch (error: any) {
     console.error('Error creating quest:', error);
-    return NextResponse.json({ error: 'Failed to create quest' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to create quest', details: error.message }, { status: 500 });
   }
 }
