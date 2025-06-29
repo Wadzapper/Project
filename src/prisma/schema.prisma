@@ -1,0 +1,586 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String            @id @default(cuid())
+  username        String            @unique
+  email           String            @unique
+  passwordHash    String
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  profile         UserProfile?
+  preferences     UserPreferences?
+  skills          Skill[]
+  skillTrees      SkillTree[]       // Inverse relation for SkillTree
+  quests          Quest[]
+  habits          Habit[]
+  philosophies    UserPhilosophy[]
+  mindMaps        MindMap[]
+  paths           Path[]
+  achievements    UserAchievement[]
+  analyticsData   AnalyticsData[]
+  exportHistory   ExportHistory[]
+  sessions        Session[]
+  notifications   Notification[]
+  feedback        Feedback[]
+  gameSettings    GameSettings?
+  socialProfile   SocialProfile?
+  leaderboardRank LeaderboardRank?
+}
+
+model UserProfile {
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firstName   String?
+  lastName    String?
+  bio         String?
+  avatarUrl   String?
+  dateOfBirth DateTime?
+  country     String?
+  timezone    String?   @default("UTC")
+}
+
+model UserPreferences {
+  id                  String        @id @default(cuid())
+  userId              String        @unique
+  user                User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  theme               String        @default("system") // "light", "dark", "system"
+  language            String        @default("en")
+  emailNotifications  Boolean       @default(true)
+  pushNotifications   Boolean       @default(true)
+  dataSharing         Boolean       @default(false) // For analytics or community features
+  lastLogin           DateTime?
+  privacySettings     Json?         // Example: { "profileVisibility": "public", "activitySharing": "friends" }
+  timeFormat          String        @default("24h") // "12h", "24h"
+  dateFormat          String        @default("YYYY-MM-DD")
+  accessibility       Json?         // Example: { "fontSize": "medium", "highContrast": false }
+}
+
+model Skill {
+  id                  String              @id @default(cuid())
+  userId              String
+  user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                String
+  description         String?
+  xp                  Int                 @default(0)
+  level               Int                 @default(1)
+  maxLevel            Int                 @default(100)
+  category            String?             // e.g., "Programming", "Fitness", "Music"
+  tags                String[]            // For filtering and searching
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  decayRate           Float?              // Percentage per interval, e.g., 0.05 for 5%
+  decayIntervalDays   Int?                // How often decay applies, e.g., 7 for weekly
+  lastDecay           DateTime?           // Last time decay was applied
+  decayEnabled        Boolean             @default(true)
+  skillTreeId         String?
+  skillTree           SkillTree?          @relation(fields: [skillTreeId], references: [id])
+  pathSteps           PathStep[]          // Skills can be part of multiple paths
+  relatedQuests       Quest[]             @relation("SkillQuests") // Quests that improve this skill
+  achievements        UserAchievement[]   // Achievements unlocked through this skill
+  learningResources   LearningResource[]
+  skillDependencies   SkillDependency[]   @relation("SkillDependencies") // Skills that depend on this one
+  skillPrerequisites  SkillDependency[]   @relation("SkillPrerequisites") // Skills that are prerequisites for this one
+  practiceLogs        PracticeLog[]
+  goal                SkillGoal?
+
+  @@index([userId])
+  @@index([skillTreeId])
+}
+
+model SkillDependency {
+  id              String  @id @default(cuid())
+  skillId         String  // The skill that has a prerequisite
+  skill           Skill   @relation("SkillDependencies", fields: [skillId], references: [id], onDelete: Cascade)
+  prerequisiteId  String  // The skill that is a prerequisite
+  prerequisite    Skill   @relation("SkillPrerequisites", fields: [prerequisiteId], references: [id], onDelete: Cascade) // onDelete Restrict to prevent accidental deletion if it's a prereq
+
+  @@unique([skillId, prerequisiteId])
+  @@index([prerequisiteId])
+}
+
+model SkillTree {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade) // User who owns this skill tree
+  name        String
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  skills      Skill[]   // Skills belonging to this tree
+  nodes       Json?     // For visual representation if using a library like React Flow { nodes: [], edges: [] }
+  isPublic    Boolean   @default(false)
+  category    String?
+
+  @@index([userId])
+}
+
+model Quest {
+  id                  String              @id @default(cuid())
+  userId              String
+  user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title               String
+  description         String?
+  status              QuestStatus         @default(TODO)
+  priority            QuestPriority       @default(MEDIUM)
+  difficulty          Int?                // e.g., 1-5 scale
+  xpReward            Int?
+  dueDate             DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  tags                String[]
+  dependencies        QuestDependency[]   @relation("QuestDependencies")
+  dependents          QuestDependency[]   @relation("QuestDependents")
+  parentQuestId       String?
+  parentQuest         Quest?              @relation("QuestChain", fields: [parentQuestId], references: [id], onDelete:SetNull) // onDelete: SetNull or Restrict
+  subQuests           Quest[]             @relation("QuestChain")
+  orderIndex          Int?                // For ordering within a chain or list
+  recurring           RecurringQuest?
+  relatedSkills       Skill[]             @relation("SkillQuests") // Skills improved by this quest
+  pathSteps           PathStep[]          // Quests can be part of paths
+  questTemplates      QuestTemplate[]     @relation("QuestToTemplate") // Instances of templates
+  achievementUnlocks  UserAchievement[]   // Achievements unlocked by this quest
+  notes               String?             // User's personal notes for the quest
+  estimatedTime       Int?                // Estimated time in minutes to complete
+  actualTime          Int?                // Actual time spent
+
+  @@index([userId])
+  @@index([parentQuestId])
+}
+
+enum QuestStatus {
+  TODO
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  ON_HOLD
+}
+
+enum QuestPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model QuestDependency {
+  id              String  @id @default(cuid())
+  questId         String  // Quest that depends on another
+  quest           Quest   @relation("QuestDependencies", fields: [questId], references: [id], onDelete: Cascade)
+  dependsOnId     String  // Quest that must be completed first
+  dependsOn       Quest   @relation("QuestDependents", fields: [dependsOnId], references: [id], onDelete: Cascade) // onDelete Cascade if deleting a prereq also deletes dependent
+
+  @@unique([questId, dependsOnId])
+  @@index([dependsOnId])
+}
+
+model RecurringQuest {
+  id          String        @id @default(cuid())
+  questId     String        @unique
+  quest       Quest         @relation(fields: [questId], references: [id], onDelete: Cascade)
+  pattern     String        // e.g., "daily", "weekly", "monthly", or cron string
+  nextDueDate DateTime
+  endDate     DateTime?     // Optional end date for recurrence
+  count       Int           @default(0) // How many times it has recurred / completed
+}
+
+model Habit {
+  id                String          @id @default(cuid())
+  userId            String
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name              String
+  description       String?
+  frequency         HabitFrequency  // e.g., DAILY, WEEKLY
+  target            Int?            // e.g., 5 times a week
+  streak            Int             @default(0)
+  longestStreak     Int             @default(0)
+  lastCompletedDate DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  archived          Boolean         @default(false)
+  history           HabitHistory[]
+  color             String?         // For UI theming
+  reminderTime      String?         // e.g., "09:00"
+  positive          Boolean         @default(true) // True for good habits, false for breaking bad ones
+
+  @@index([userId])
+}
+
+enum HabitFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  SPECIFIC_DAYS // Could store specific days in another field if this is chosen, e.g. [MON, WED, FRI]
+}
+
+model HabitHistory {
+  id          String    @id @default(cuid())
+  habitId     String
+  habit       Habit     @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  date        DateTime  // Date of completion or miss
+  completed   Boolean
+  notes       String?
+  loggedAt    DateTime  @default(now())
+
+  @@unique([habitId, date]) // Ensure one entry per day per habit
+  @@index([habitId])
+}
+
+model UserPhilosophy {
+  id          String    @id @default(cuid())
+  userId      String    @unique // Made unique as per initial instructions
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coreValues  String[]
+  mission     String?
+  vision      String?
+  quotes      Json?     // [{ text: "...", author: "..." }]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model MindMap {
+  id          String        @id @default(cuid())
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  nodes       MindMapNode[]
+  edges       MindMapEdge[]
+  isPublic    Boolean       @default(false)
+  layout      Json?         // Store layout info for rendering
+
+  @@index([userId])
+}
+
+model MindMapNode {
+  id          String        @id @default(cuid())
+  mindMapId   String
+  mindMap     MindMap       @relation(fields: [mindMapId], references: [id], onDelete: Cascade)
+  label       String
+  content     String?
+  xPosition   Float?        // For graph visualization
+  yPosition   Float?        // For graph visualization
+  color       String?
+  shape       String?       // e.g., "circle", "rectangle"
+  parentNode  MindMapNode?  @relation("NodeHierarchy", fields: [parentNodeId], references: [id], onDelete:NoAction, onUpdate:NoAction)
+  parentNodeId String?
+  childNodes  MindMapNode[] @relation("NodeHierarchy")
+  edgesFrom   MindMapEdge[] @relation("EdgeSource")
+  edgesTo     MindMapEdge[] @relation("EdgeTarget")
+
+  @@index([mindMapId])
+  @@index([parentNodeId])
+}
+
+model MindMapEdge {
+  id          String      @id @default(cuid())
+  mindMapId   String
+  mindMap     MindMap     @relation(fields: [mindMapId], references: [id], onDelete:Cascade) // Edge belongs to a mindmap
+  sourceId    String
+  sourceNode  MindMapNode @relation("EdgeSource", fields: [sourceId], references: [id], onDelete:Cascade)
+  targetId    String
+  targetNode  MindMapNode @relation("EdgeTarget", fields: [targetId], references: [id], onDelete:Cascade)
+  label       String?
+  animated    Boolean?    @default(false)
+
+  @@unique([sourceId, targetId, mindMapId]) // Ensure unique edges within a mindmap
+  @@index([mindMapId])
+  @@index([targetId])
+}
+
+model Path {
+  id          String      @id @default(cuid())
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  steps       PathStep[]
+  isPublic    Boolean     @default(false)
+  category    String?     // e.g., "Career Development", "Learning Guitar"
+  coverImage  String?
+
+  @@index([userId])
+}
+
+model PathStep {
+  id          String    @id @default(cuid())
+  pathId      String
+  path        Path      @relation(fields: [pathId], references: [id], onDelete: Cascade)
+  orderIndex  Int       // Order of the step in the path
+  title       String
+  description String?
+  type        PathStepType @default(TASK) // TASK, SKILL_GOAL, QUEST_LINK
+  skillId     String?   // Optional link to a Skill
+  skill       Skill?    @relation(fields: [skillId], references: [id], onDelete:SetNull)
+  questId     String?   // Optional link to a Quest
+  quest       Quest?    @relation(fields: [questId], references: [id], onDelete:SetNull)
+  targetValue Int?      // e.g., reach skill level X, complete quest Y
+  isCompleted Boolean   @default(false)
+  completedAt DateTime?
+  estimatedDuration Int? // in minutes or hours
+
+  @@unique([pathId, orderIndex])
+  @@index([skillId])
+  @@index([questId])
+}
+
+enum PathStepType {
+  TASK        // A generic task to complete
+  SKILL_GOAL  // A goal related to a specific skill (e.g., reach level 5)
+  QUEST_LINK  // Link to an existing quest
+  MILESTONE   // A significant checkpoint in the path
+}
+
+model Achievement {
+  id            String            @id @default(cuid())
+  name          String            @unique
+  description   String
+  criteria      String            // How to earn it, e.g., "Complete 10 quests"
+  iconUrl       String?
+  points        Int?              @default(0)
+  category      String?           // e.g., "Quest Master", "Skill Guru"
+  level         Int?              // For multi-level achievements
+  color         String?           // For UI theming, e.g., bronze, silver, gold
+  secret        Boolean           @default(false) // Is this a hidden achievement?
+  userUnlocks   UserAchievement[]
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+}
+
+model UserAchievement {
+  id            String      @id @default(cuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievementId String
+  achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  unlockedAt    DateTime    @default(now())
+  notified      Boolean     @default(false) // If user has been notified about this achievement
+  progress      Json?       // For achievements with progress, e.g. { current: 5, target: 10 }
+  skillId       String?     // Optional: skill that triggered this achievement
+  skill         Skill?      @relation(fields: [skillId], references: [id], onDelete:SetNull)
+  questId       String?     // Optional: quest that triggered this achievement
+  quest         Quest?      @relation(fields: [questId], references: [id], onDelete:SetNull)
+
+
+  @@unique([userId, achievementId])
+  @@index([achievementId])
+  @@index([skillId])
+  @@index([questId])
+}
+
+model QuestTemplate {
+  id            String    @id @default(cuid())
+  name          String    @unique
+  description   String?
+  category      String?
+  difficulty    Int?
+  xpReward      Int?
+  tags          String[]
+  templateData  Json      // Store the quest structure, e.g., { title: "Template: {{name}}", description: "..." }
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  questInstances Quest[] @relation("QuestToTemplate") // Quests created from this template
+  recommendations Recommendation[] // Recommendations that might use this template
+}
+
+model Recommendation {
+  id              String        @id @default(cuid())
+  userId          String        // Can be targeted to a user or global (if userId is null)
+  title           String
+  description     String
+  type            RecommendationType // SKILL, QUEST, PATH, RESOURCE
+  relatedSkillId  String?
+  relatedQuestId  String?
+  relatedPathId   String?
+  questTemplateId String?       // If this recommendation is to start a quest from a template
+  questTemplate   QuestTemplate? @relation(fields: [questTemplateId], references: [id], onDelete:SetNull)
+  resourceLink    String?
+  reason          String?       // Why this is recommended
+  priority        Int           @default(0) // Higher is more important
+  viewed          Boolean       @default(false)
+  accepted        Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+
+  @@index([userId])
+  @@index([relatedSkillId])
+  @@index([relatedQuestId])
+  @@index([relatedPathId])
+  @@index([questTemplateId])
+}
+
+enum RecommendationType {
+  SKILL
+  QUEST
+  PATH
+  RESOURCE
+  HABIT
+}
+
+model AnalyticsData {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date        DateTime  // Date of the analytics entry (e.g., end of day)
+  type        String    // e.g., "daily_summary", "weekly_skill_progress", "quest_completion_rate"
+  data        Json      // The actual analytics data
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, date])
+  @@index([type])
+}
+
+model ExportHistory {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        String    // "all", "skills", "quests", etc.
+  format      String    // "json", "csv"
+  status      String    // "pending", "completed", "failed"
+  fileUrl     String?   // Link to the exported file (if applicable)
+  error       String?
+  requestedAt DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([userId])
+}
+
+// Additional Models based on potential future needs or common app features
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique // Session token
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  ipAddress String?
+  userAgent String?
+
+  @@index([userId])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String    // e.g., "achievement_unlocked", "quest_due", "new_recommendation"
+  message   String
+  isRead    Boolean   @default(false)
+  link      String?   // Link to relevant part of the app
+  createdAt DateTime  @default(now())
+
+  @@index([userId, isRead])
+}
+
+model Feedback {
+  id        String   @id @default(cuid())
+  userId    String?  // Optional, for anonymous feedback
+  user      User?    @relation(fields: [userId], references: [id], onDelete:SetNull)
+  type      String   // e.g., "bug_report", "feature_request", "general_feedback"
+  message   String
+  email     String?  // If user wants a reply and is not logged in
+  status    String   @default("received") // "received", "in_progress", "resolved", "wont_fix"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model GameSettings {
+  id                String  @id @default(cuid())
+  userId            String  @unique
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  animationsEnabled Boolean @default(true)
+  soundEffectsLevel Float   @default(0.5) // 0 to 1
+  musicLevel        Float   @default(0.5) // 0 to 1
+  difficultyScaling Float   @default(1.0) // For dynamic difficulty adjustments
+  tutorialSeen      Json?   // Flags for different tutorial parts seen, e.g. { "dashboard": true, "skills": false }
+}
+
+model SocialProfile {
+  id          String  @id @default(cuid())
+  userId      String  @unique
+  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName String?
+  profileUrl  String? // Link to a public profile page if any
+  friends     Json?   // Could be array of user IDs or more complex objects
+}
+
+model LeaderboardRank {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  score       Int
+  rank        Int
+  lastUpdated DateTime @updatedAt
+  period      String   // e.g., "weekly", "monthly", "all_time"
+
+  @@index([score])
+  @@index([period, rank])
+}
+
+model LearningResource {
+  id          String   @id @default(cuid())
+  skillId     String
+  skill       Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  title       String
+  url         String?
+  type        ResourceType @default(ARTICLE) // ARTICLE, VIDEO, COURSE, BOOK, TOOL
+  notes       String?
+  completed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([skillId])
+}
+
+enum ResourceType {
+  ARTICLE
+  VIDEO
+  COURSE
+  BOOK
+  TOOL
+  OTHER
+}
+
+model PracticeLog {
+  id          String   @id @default(cuid())
+  skillId     String
+  skill       Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  startTime   DateTime
+  endTime     DateTime
+  duration    Int      // in minutes, calculated
+  notes       String?
+  xpGained    Int?     @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([skillId])
+}
+
+model SkillGoal {
+  id            String    @id @default(cuid())
+  skillId       String    @unique // A skill can have one primary goal defined here
+  skill         Skill     @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  targetLevel   Int?
+  targetXp      Int?
+  deadline      DateTime?
+  description   String?
+  achieved      Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}

@@ -1,0 +1,50 @@
+{
+  "name": "app",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Wadzapper/Project.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Wadzapper/Project/issues"
+  },
+  "homepage": "https://github.com/Wadzapper/Project#readme",
+  "prisma": {
+    "schema": "src/prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.10.1",
+    "json2csv": "^6.0.0-alpha.2",
+    "next": "^15.3.4",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/json2csv": "^5.0.7",
+    "@types/node": "^24.0.7",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "autoprefixer": "^10.4.21",
+    "dotenv-cli": "^8.0.0",
+    "eslint": "^9.30.0",
+    "eslint-config-next": "^15.3.4",
+    "postcss": "^8.5.6",
+    "prisma": "^6.10.1",
+    "tailwindcss": "^4.1.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  }
+}
