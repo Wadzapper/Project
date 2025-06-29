@@ -2,147 +2,162 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { Parser } from 'json2csv';
+import JSZip from 'jszip';
 
 const prisma = new PrismaClient();
 
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const userId = searchParams.get('userId');
-  const type = searchParams.get('type') as 'skills' | 'quests' | 'habits' | 'all' | null;
-  const format = searchParams.get('format') as 'json' | 'csv' | null;
-
-  if (!userId) {
-    return NextResponse.json({ message: 'Missing required query parameter: userId' }, { status: 400 });
-  }
-  if (!type) {
-    return NextResponse.json({ message: 'Missing required query parameter: type (skills, quests, habits, all)' }, { status: 400 });
-  }
-  if (!format) {
-    return NextResponse.json({ message: 'Missing required query parameter: format (json, csv)' }, { status: 400 });
-  }
-  if (!['skills', 'quests', 'habits', 'all'].includes(type)) {
-    return NextResponse.json({ message: 'Invalid type parameter. Must be one of: skills, quests, habits, all' }, { status: 400 });
-  }
-  if (!['json', 'csv'].includes(format)) {
-    return NextResponse.json({ message: 'Invalid format parameter. Must be json or csv' }, { status: 400 });
-  }
-
+// Helper function to safely stringify potentially complex objects for CSV
+const safeStringify = (obj: any): string => {
+  if (obj === null || obj === undefined) return '';
+  if (typeof obj === 'string') return obj;
   try {
-    let data: any;
-    let fileName = `${userId}_export_${type}`;
+    return JSON.stringify(obj);
+  } catch (e) {
+    return 'Error serializing object';
+  }
+};
 
-    const user = await prisma.user.findUnique({ where: { id: userId }});
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+    const { userId } = body;
+
+    if (!userId) {
+      return NextResponse.json({ message: 'Request body must contain "userId".' }, { status: 400 });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        profile: true,
+        preferences: true,
+      }
+    });
+
     if (!user) {
-        return NextResponse.json({ message: `User with ID ${userId} not found.`}, { status: 404 });
+      return NextResponse.json({ message: `User with ID ${userId} not found.` }, { status: 404 });
     }
 
-    if (type === 'skills' || type === 'all') {
-      const skills = await prisma.skill.findMany({
-        where: { userId },
-        include: { skillTree: { select: { name: true } } } // Example of including related data
-      });
-      if (type === 'skills') data = skills;
-      else data = { ...(data || {}), skills };
+    const json2csvParser = new Parser();
+    const zip = new JSZip();
+    const fileNamePrefix = `gamified_os_export_${userId}_${new Date().toISOString().split('T')[0]}`;
+
+    // 1. User Data (User, UserProfile, UserPreferences)
+    const { profile, preferences, ...userData } = user;
+    const userProfileData = profile ? [{ ...profile, userId: user.id }] : [];
+    const userPreferencesData = preferences ? [{ ...preferences, userId: user.id }] : [];
+
+    zip.file("user.csv", json2csvParser.parse([userData]));
+    if (userProfileData.length > 0) zip.file("user_profile.csv", json2csvParser.parse(userProfileData));
+    if (userPreferencesData.length > 0) zip.file("user_preferences.csv", json2csvParser.parse(userPreferencesData));
+
+    // 2. Skills
+    const skills = await prisma.skill.findMany({ where: { userId }, include: { skillTree: {select: {name: true}} } });
+    if (skills.length > 0) {
+        const skillsCsv = skills.map(s => ({...s, skillTreeName: s.skillTree?.name, tags: s.tags.join(',')}));
+        zip.file("skills.csv", json2csvParser.parse(skillsCsv));
     }
 
-    if (type === 'quests' || type === 'all') {
-      const quests = await prisma.quest.findMany({
+    // 3. SkillTrees
+    const skillTrees = await prisma.skillTree.findMany({ where: { userId }, include: { _count: {select: {skills: true}}} });
+     if (skillTrees.length > 0) {
+        const skillTreesCsv = skillTrees.map(st => ({...st, nodes: safeStringify(st.nodes), skillsCount: st._count.skills}));
+        zip.file("skill_trees.csv", json2csvParser.parse(skillTreesCsv));
+    }
+
+    // 4. Quests
+    const quests = await prisma.quest.findMany({
         where: { userId },
         include: {
-            parentQuest: { select: { title: true }},
-            relatedSkills: { select: { name: true }}
+            parentQuest: {select: {title: true}},
+            relatedSkills: {select: {name: true}},
+            dependencies: {include: {dependsOn: {select: {title: true}}}},
+            dependents: {include: {quest: {select: {title: true}}}},
         }
-      });
-      if (type === 'quests') data = quests;
-      else data = { ...(data || {}), quests };
+    });
+    if (quests.length > 0) {
+        const questsCsv = quests.map(q => ({
+            ...q,
+            parentQuestTitle: q.parentQuest?.title,
+            relatedSkillNames: q.relatedSkills.map(s => s.name).join(','),
+            tags: q.tags.join(','),
+            dependenciesTitles: q.dependencies.map(d => d.dependsOn.title).join('; '),
+            dependentsTitles: q.dependents.map(d => d.quest.title).join('; '),
+        }));
+        zip.file("quests.csv", json2csvParser.parse(questsCsv));
     }
 
-    if (type === 'habits' || type === 'all') {
-      const habits = await prisma.habit.findMany({
-        where: { userId },
-        include: { history: { orderBy: { date: 'desc' }} }
-      });
-      if (type === 'habits') data = habits;
-      else data = { ...(data || {}), habits };
-    }
+    // Quest Dependencies (as a separate file for clarity if many-to-many becomes complex)
+    // For now, included basic info in quests.csv
 
-    // If type is 'all', data is already an object with keys skills, quests, habits.
-    // If type is specific, data holds the array for that type.
+    // 5. Habits & HabitHistory
+    const habits = await prisma.habit.findMany({ where: { userId } });
+    if (habits.length > 0) zip.file("habits.csv", json2csvParser.parse(habits));
 
-    if (!data || (Array.isArray(data) && data.length === 0) || (typeof data === 'object' && Object.keys(data).length === 0) ) {
-        return NextResponse.json({ message: 'No data found for the specified type and user.' }, { status: 404 });
-    }
+    const habitHistory = await prisma.habitHistory.findMany({ where: { habit: { userId } } });
+    if (habitHistory.length > 0) zip.file("habit_history.csv", json2csvParser.parse(habitHistory));
 
+    // 6. Paths & PathSteps
+    const paths = await prisma.path.findMany({ where: { userId } });
+    if (paths.length > 0) zip.file("paths.csv", json2csvParser.parse(paths));
 
-    if (format === 'json') {
-      fileName += '.json';
-      return new NextResponse(JSON.stringify(data, null, 2), {
-        status: 200,
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Disposition': `attachment; filename="${fileName}"`,
-        },
-      });
-    } else if (format === 'csv') {
-      fileName += '.csv';
-      let csv;
-      const json2csvParser = new Parser();
-
-      if (type === 'all') {
-        // For 'all', CSV export might be tricky as it contains multiple arrays.
-        // Option 1: Create a zip of multiple CSVs (complex for this phase)
-        // Option 2: Flatten or pick one. For now, let's return a message or try to flatten skills.
-        // Returning a single CSV for 'all' is non-trivial. We'll just export skills if 'all' and CSV.
-        // A better approach would be separate CSVs per type or a ZIP.
-        if(data.skills && data.skills.length > 0) {
-            csv = json2csvParser.parse(data.skills.map((s: any) => ({...s, skillTreeName: s.skillTree?.name})));
-            fileName = `${userId}_export_all_skills_partial.csv`; // Indicate it's partial
-        } else if (data.quests && data.quests.length > 0) {
-            csv = json2csvParser.parse(data.quests.map((q: any) => ({...q, parentQuestTitle: q.parentQuest?.title, relatedSkillNames: q.relatedSkills?.map((rs:any) => rs.name).join(', ') })));
-            fileName = `${userId}_export_all_quests_partial.csv`;
-        } else if (data.habits && data.habits.length > 0) {
-            // Flattening habits with history is also complex for single CSV.
-            // For simplicity, export habits without history for 'all' type CSV.
-            csv = json2csvParser.parse(data.habits.map((h:any) => { const {history, ...habitData} = h; return habitData; }));
-            fileName = `${userId}_export_all_habits_partial.csv`;
-        } else {
-            return NextResponse.json({ message: "CSV export for 'all' type is complex. Try exporting a specific type or JSON format." }, { status: 400 });
+    const pathSteps = await prisma.pathStep.findMany({
+        where: { path: { userId } },
+        include: {
+            relatedSkill: {select: {name: true}},
+            relatedQuest: {select: {title: true}},
         }
-      } else if (type === 'skills' && Array.isArray(data)) {
-        csv = json2csvParser.parse(data.map((s: any) => ({...s, skillTreeName: s.skillTree?.name})));
-      } else if (type === 'quests' && Array.isArray(data)) {
-        csv = json2csvParser.parse(data.map((q: any) => ({...q, parentQuestTitle: q.parentQuest?.title, relatedSkillNames: q.relatedSkills?.map((rs:any) => rs.name).join(', ') })));
-      } else if (type === 'habits' && Array.isArray(data)) {
-        // For specific habit export, we might want to flatten history or provide only main habit data
-        // For now, let's provide main habit data. A more detailed export might be needed.
-         csv = json2csvParser.parse(data.map((h:any) => { const {history, ...habitData} = h; return habitData; }));
-      } else {
-         return NextResponse.json({ message: 'Data type not suitable for CSV export or no data.' }, { status: 400 });
-      }
-
-      if (!csv) {
-        return NextResponse.json({ message: 'Could not generate CSV data.' }, { status: 500 });
-      }
-
-      return new NextResponse(csv, {
-        status: 200,
-        headers: {
-          'Content-Type': 'text/csv',
-          'Content-Disposition': `attachment; filename="${fileName}"`,
-        },
-      });
+    });
+    if (pathSteps.length > 0) {
+        const pathStepsCsv = pathSteps.map(ps => ({
+            ...ps,
+            relatedSkillName: ps.relatedSkill?.name,
+            relatedQuestTitle: ps.relatedQuest?.title,
+        }));
+        zip.file("path_steps.csv", json2csvParser.parse(pathStepsCsv));
     }
 
-    // Should not reach here due to validation
-    return NextResponse.json({ message: 'Invalid format specified.' }, { status: 400 });
+    // 7. MindMaps, MindMapNodes, MindMapEdges
+    const mindMaps = await prisma.mindMap.findMany({ where: { userId } });
+    if (mindMaps.length > 0) {
+        const mindMapsCsv = mindMaps.map(mm => ({...mm, layout: safeStringify(mm.layout)}));
+        zip.file("mind_maps.csv", json2csvParser.parse(mindMapsCsv));
+    }
+
+    const mindMapNodes = await prisma.mindMapNode.findMany({ where: { mindMap: { userId } } });
+    if (mindMapNodes.length > 0) zip.file("mind_map_nodes.csv", json2csvParser.parse(mindMapNodes));
+
+    const mindMapEdges = await prisma.mindMapEdge.findMany({ where: { mindMap: { userId } } });
+    if (mindMapEdges.length > 0) zip.file("mind_map_edges.csv", json2csvParser.parse(mindMapEdges));
+
+    // 8. UserPhilosophies
+    const userPhilosophy = await prisma.userPhilosophy.findUnique({ where: { userId } });
+    if (userPhilosophy) {
+        const philosophyCsv = [{...userPhilosophy, coreValues: userPhilosophy.coreValues.join(','), quotes: safeStringify(userPhilosophy.quotes) }];
+        zip.file("user_philosophy.csv", json2csvParser.parse(philosophyCsv));
+    }
+
+    // Generate the zip file
+    const zipContent = await zip.generateAsync({ type: "nodebuffer" });
+    const finalFileName = `${fileNamePrefix}.zip`;
+
+    return new NextResponse(zipContent, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="${finalFileName}"`,
+      },
+    });
 
   } catch (error) {
-    console.error('Error exporting data:', error);
+    console.error('Error exporting user data:', error);
+    // Ensure error is an instance of Error for type safety with message property
+    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      return NextResponse.json({ message: 'Database error during export', error: error.message }, { status: 500 });
+      return NextResponse.json({ message: 'Database error during export', error: errorMessage }, { status: 500 });
     }
-    // Log unexpected errors
-    console.error("Unexpected error in /api/export:", error);
-    return NextResponse.json({ message: 'Internal server error during export' }, { status: 500 });
+    console.error("Unexpected error in POST /api/export:", error);
+    return NextResponse.json({ message: 'Internal server error during export', error: errorMessage }, { status: 500 });
   }
 }

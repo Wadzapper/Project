@@ -27,10 +27,13 @@
   },
   "dependencies": {
     "@prisma/client": "^6.10.1",
+    "framer-motion": "^12.19.2",
     "json2csv": "^6.0.0-alpha.2",
+    "jszip": "^3.10.1",
     "next": "^15.3.4",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "recharts": "^3.0.2"
   },
   "devDependencies": {
     "@types/json2csv": "^5.0.7",

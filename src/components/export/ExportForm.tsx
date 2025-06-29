@@ -2,11 +2,11 @@
 'use client';
 
 import React, { useState, FormEvent } from 'react';
+import { motion } from 'framer-motion';
 
 const ExportForm = () => {
-  const [dataType, setDataType] = useState<'skills' | 'quests' | 'habits' | 'all'>('all');
-  const [format, setFormat] = useState<'json' | 'csv'>('json');
-  const [userId, setUserId] = useState<string>(''); // In a real app, get this from session/auth
+  // userId will be used for the API request. In a real app, this would come from auth context.
+  const [userId, setUserId] = useState<string>('demo-user'); // Default to demo-user for now
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -17,27 +17,33 @@ const ExportForm = () => {
     setError(null);
     setMessage(null);
 
-    if (!userId) {
+    if (!userId.trim()) {
       setError('User ID is required. Please enter a User ID.');
       setIsLoading(false);
       return;
     }
 
     try {
-      const response = await fetch(`/api/export?userId=${encodeURIComponent(userId)}&type=${dataType}&format=${format}`);
+      const response = await fetch(`/api/export`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId }),
+      });
 
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({ message: 'Failed to parse error response.' }));
         throw new Error(errorData.message || `Export failed with status: ${response.status}`);
       }
 
       const blob = await response.blob();
       const contentDisposition = response.headers.get('content-disposition');
-      let fileName = `${userId}_export_${dataType}.${format}`; // Default filename
+      let fileName = `${userId}_export_all_data.zip`; // Default filename for ZIP
 
       if (contentDisposition) {
-        const fileNameMatch = contentDisposition.match(/filename="?(.+)"?/i);
-        if (fileNameMatch && fileNameMatch.length === 2) {
+        const fileNameMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+        if (fileNameMatch && fileNameMatch.length > 1) {
           fileName = fileNameMatch[1];
         }
       }
@@ -61,62 +67,61 @@ const ExportForm = () => {
   };
 
   return (
-    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '400px', margin: 'auto' }}>
-      <h2>Export Data</h2>
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5 }}
+      className="bg-white dark:bg-zinc-800 p-6 md:p-8 rounded-2xl shadow-lg max-w-md mx-auto"
+    >
+      <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+        <h2 className="text-2xl font-semibold text-center text-zinc-800 dark:text-zinc-100">
+          Download Your Data Archive
+        </h2>
 
-      {/* This UserId input is for testing. In a real app, it would come from auth. */}
-      <div>
-        <label htmlFor="userId" style={{ marginRight: '0.5rem' }}>User ID (for testing):</label>
-        <input
-          type="text"
-          id="userId"
-          value={userId}
-          onChange={(e) => setUserId(e.target.value)}
-          placeholder="Enter User ID"
-          required
-          style={{ padding: '0.5rem', border: '1px solid #ccc', borderRadius: '4px' }}
-        />
-      </div>
+        {/* UserID input - can be hidden or removed if userId comes from auth context */}
+        <div>
+          <label htmlFor="userIdExport" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
+            User ID (e.g., "demo-user"):
+          </label>
+          <input
+            type="text"
+            id="userIdExport"
+            value={userId}
+            onChange={(e) => setUserId(e.target.value)}
+            placeholder="Enter User ID"
+            required
+            className="w-full px-3 py-2 border border-zinc-300 dark:border-zinc-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-zinc-700 dark:text-zinc-100"
+          />
+        </div>
 
-      <div>
-        <label htmlFor="dataType" style={{ marginRight: '0.5rem' }}>Data Type:</label>
-        <select
-          id="dataType"
-          value={dataType}
-          onChange={(e) => setDataType(e.target.value as any)}
-          style={{ padding: '0.5rem', border: '1px solid #ccc', borderRadius: '4px' }}
+        <p className="text-sm text-zinc-600 dark:text-zinc-400 text-center">
+          This will download a .zip file containing all your data in CSV format.
+        </p>
+
+        <motion.button
+          type="submit"
+          disabled={isLoading}
+          className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition-colors duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+          whileHover={{ scale: isLoading ? 1 : 1.03 }}
+          whileTap={{ scale: isLoading ? 1 : 0.98 }}
         >
-          <option value="all">All</option>
-          <option value="skills">Skills</option>
-          <option value="quests">Quests</option>
-          <option value="habits">Habits</option>
-        </select>
-      </div>
+          {isLoading ? (
+            <>
+              <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              Exporting...
+            </>
+          ) : (
+            'Download My Data Archive (ZIP)'
+          )}
+        </motion.button>
 
-      <div>
-        <label htmlFor="format" style={{ marginRight: '0.5rem' }}>Format:</label>
-        <select
-          id="format"
-          value={format}
-          onChange={(e) => setFormat(e.target.value as any)}
-          style={{ padding: '0.5rem', border: '1px solid #ccc', borderRadius: '4px' }}
-        >
-          <option value="json">JSON</option>
-          <option value="csv">CSV</option>
-        </select>
-      </div>
-
-      <button
-        type="submit"
-        disabled={isLoading}
-        style={{ padding: '0.75rem', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-      >
-        {isLoading ? 'Exporting...' : 'Download Export'}
-      </button>
-
-      {error && <p style={{ color: 'red' }}>Error: {error}</p>}
-      {message && <p style={{ color: 'green' }}>{message}</p>}
-    </form>
+        {message && <p className="text-green-600 dark:text-green-400 text-sm text-center">{message}</p>}
+        {error && <p className="text-red-600 dark:text-red-400 text-sm text-center">Error: {error}</p>}
+      </form>
+    </motion.div>
   );
 };
 

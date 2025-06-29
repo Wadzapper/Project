@@ -353,3 +353,76 @@
 
 **Next Steps:**
 *   Proceed to Phase 3: Achievements & Quests Enhancement.
+
+---
+## [2024-07-16] Phase 2.3: Export & Analytics
+
+**Date:** (Placeholder - using today's date as example)
+
+**Objective:** Implement data export functionality and a basic analytics dashboard.
+
+**Actions Taken & Decisions:**
+
+1.  **API: Export User Data (`POST /api/export/route.ts`):**
+    *   Modified existing GET route to a POST route.
+    *   Installed `jszip` dependency (`npm install jszip`).
+    *   Expects `userId` in the request body.
+    *   Fetches comprehensive user data: User (profile, preferences), Skills (with SkillTree name), SkillTrees (with skill count), Quests (with parent, related skills, dependencies), Habits, HabitHistory, Paths, PathSteps (with related skill/quest names), MindMaps (with layout), MindMapNodes, MindMapEdges, UserPhilosophy.
+    *   Uses `json2csv` to convert each entity group into a separate CSV string. JSON fields (like `SkillTree.nodes`, `MindMap.layout`, `UserPhilosophy.quotes`) and arrays (like `Skill.tags`) are stringified for CSV compatibility using a `safeStringify` helper.
+    *   **Decision:** CSVs are bundled into a single `.zip` file using `jszip`. This was feasible.
+    *   Returns the ZIP file with `Content-Type: application/zip` and appropriate `Content-Disposition` header.
+    *   Includes error handling for user not found and database/zip errors.
+
+2.  **API: Analytics (`GET /api/analytics/route.ts`):**
+    *   Created new route `src/app/api/analytics/route.ts`.
+    *   Accepts `userId` as a query parameter.
+    *   Calculates and returns:
+        *   Quest stats: `totalQuests`, `completedQuestsCount`, `questsCompletionPercentage`.
+        *   Quest breakdown: `questStatusCounts`, `questPriorityCounts` (raw counts), and `questStatusChartData`, `questPriorityChartData` (formatted for Recharts).
+        *   Skill stats: `totalSkills`, `averageSkillLevel`, `highestLevelSkill` (name & level).
+        *   Habit stats (placeholder): `longestCurrentHabitStreak`, `overallLongestHabitStreak` (uses stored values).
+        *   Path stats: `totalPaths`, `averagePathCompletionPercentage`.
+    *   Uses Prisma aggregations and JavaScript for calculations.
+
+3.  **Frontend: Export Page & Component:**
+    *   **`src/components/export/ExportForm.tsx`:**
+        *   Enhanced to make a `POST` request to `/api/export` with `userId` in the body.
+        *   Removed data type and format selection, as the API now exports all data as a ZIP of CSVs.
+        *   Handles `.zip` file download.
+        *   Updated button text to "Download My Data Archive (ZIP)".
+        *   Styled with Tailwind CSS and Framer Motion.
+    *   **`src/app/export/page.tsx`:**
+        *   Updated descriptive text to reflect the new ZIP archive export functionality.
+        *   Styled with Tailwind CSS.
+
+4.  **Frontend: Analytics Dashboard:**
+    *   **`src/components/analytics/StatsCard.tsx`:**
+        *   Created a reusable card component to display a label, value, optional icon, and description.
+        *   Styled with Tailwind CSS and Framer Motion for entrance animation.
+    *   **`src/components/analytics/QuestPieChart.tsx`:**
+        *   Installed `recharts` (`npm install recharts`).
+        *   Created a component to display a pie chart for quest status/priority breakdown using Recharts.
+        *   Includes predefined colors for quest statuses and a tooltip.
+        *   Styled with Tailwind CSS and Framer Motion for entrance animation.
+    *   **`src/app/analytics/page.tsx`:**
+        *   Created the main analytics dashboard page.
+        *   Fetches data from `GET /api/analytics` using a placeholder `userId` ("demo-user").
+        *   Uses `StatsCard` to display key metrics (quests, skills, habits, paths).
+        *   Uses `QuestPieChart` to display quest status and priority breakdowns.
+        *   Includes placeholder sections for future detailed analytics.
+        *   Styled with Tailwind CSS and Framer Motion for page/section entrance animations.
+
+**Assumptions & Notes:**
+*   **User ID:** Using "demo-user" as a placeholder for `userId` in frontend components.
+*   **Habit Streaks:** Analytics for habit streaks currently relies on pre-calculated `streak` and `longestStreak` fields in the `Habit` model. Live, complex streak calculation is a future enhancement.
+*   **Error Handling:** Basic error display is implemented in frontend components. More sophisticated global error handling can be added later.
+*   **Styling:** Adhered to Tailwind CSS for styling, including `dark:` variants and consistency with previous phases (e.g., `rounded-2xl`, `shadow-lg`).
+*   **Performance:** For analytics, current Prisma queries fetch all relevant data then perform calculations in JS. For very large datasets, some aggregations might be optimizable directly in the database if performance becomes an issue. Noted as a future consideration.
+
+**Future Ideas Noted:**
+*   More detailed analytics charts and trend analysis.
+*   Refined habit streak calculation.
+*   Allowing users to select specific data types for CSV export even with ZIP (e.g., via query params to the POST endpoint or separate endpoints).
+
+**Next Steps:**
+*   Proceed to Phase 3.1: Quest Chains.
