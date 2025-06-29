@@ -426,3 +426,34 @@
 
 **Next Steps:**
 *   Proceed to Phase 3.1: Quest Chains.
+
+---
+## [2024-07-16] Phase 2.3 Build Fixes & Deferred Phases
+
+**Date:** (Placeholder - using today's date as example)
+
+**Objective:** Document attempts to fix persistent build errors and log deferred phases.
+
+**Build Fix Attempts (Summary):**
+*   **`tsconfig.json` for Path Aliases:**
+    *   Ensured `compilerOptions.paths` was set to `{"@/*": ["./src/*"]}`.
+    *   Added `compilerOptions.baseUrl: "./"`.
+    *   Cleared `.next` cache (`rm -rf .next`).
+    *   **Outcome:** `npx next build` still failed to resolve path aliases (e.g., `@/components/...`) and other node modules.
+*   **Dependency Verification & Reinstallation:**
+    *   Confirmed critical packages (`@prisma/client`, `framer-motion`, `jszip`, `json2csv`, `recharts`, `next`, `react`, `react-dom`) are in `dependencies` in `package.json`.
+    *   Ran `npm install` to ensure `node_modules` consistency.
+    *   Ran `npx prisma generate` again.
+    *   Installed `framer-motion` as it was identified as missing from `package.json` during one of the build error analyses.
+    *   **Outcome:** `npx next build` continued to fail with "Module not found" errors for these dependencies and path aliases.
+
+**Conclusion on Build Errors:**
+*   The persistent "Module not found" errors, despite correct `tsconfig.json` path alias setup and verified dependencies in `package.json`, strongly indicate a fundamental issue with the Next.js build process or module resolution within the specific sandbox environment. These issues seem beyond simple configuration fixes and likely require environment-level adjustments not available to me.
+*   Development will proceed with the understanding that while code is type-checked and logically reviewed, a successful `next build` is not currently achievable in this sandbox.
+
+**Deferred Phases (As per User Instruction):**
+*   **AI Suggestions (Original Phase 2.5):** This feature is deferred until the core product functionality is more complete.
+*   **Social Graph/Feedback (Original Phase 2.6):** This feature is also deferred.
+
+**Next Steps:**
+*   Proceed with redefined Phase 2.4: Notifications & Smart Suggestions.
