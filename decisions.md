@@ -273,6 +273,83 @@
 *   The XP-to-level formula (`level = floor(xp / 100) + 1`) is a simplification and can be replaced later.
 *   Persisting actual decayed XP/level values to the database is currently only implicitly handled when other skill properties are updated via PATCH/PUT, or would require a dedicated process (e.g., cron job, or on skill-mutating actions like quest completion), which is noted as a potential future enhancement. GET requests only show the *effect* of decay.
 *   Theming for skill display (silver/gold highlights) is a UI concern for later.
+*   **Future Enhancement Ideas (from user feedback):**
+    *   Consider persisting `effectiveXp` and `lastDecay` on POST actions that mutate skill (e.g., complete quest, practice skill) for smoother decay accumulation.
+    *   Add a CRON-style background job (e.g., `decaySkillsDaily.ts`) to periodically run decay and persist values.
 
 **Next Steps:**
 *   Proceed to Phase 2.2: Paths & Milestones Progress.
+
+---
+## [2024-07-15] Phase 2.2: Paths & Milestones
+
+**Date:** (Placeholder - using today's date as example)
+
+**Objective:** Implement backend and frontend for Paths and PathSteps.
+
+**Actions Taken & Decisions:**
+
+1.  **Prisma Schema Update (`src/prisma/schema.prisma`):**
+    *   Added `Path` and `PathStep` models.
+    *   **`Path` Model:** `id` (cuid), `userId`, `title`, `description` (optional), `color` (optional string, default "blue"), `createdAt`, `updatedAt`. Relations: `User` (Cascade delete), `PathStep` (one-to-many).
+    *   **`PathStep` Model:** `id` (cuid), `pathId`, `title`, `description` (optional), `order` (Int), `relatedSkillId` (optional), `relatedQuestId` (optional), `completed` (Boolean), `createdAt`, `updatedAt`. Relations: `Path` (Cascade delete), `Skill` (SetNull on delete), `Quest` (SetNull on delete).
+    *   **Rationale/Changes from Prompt:**
+        *   Used `cuid` for IDs for consistency instead of `uuid`.
+        *   Added `onDelete` rules for referential integrity.
+        *   Added `createdAt`/`updatedAt` to `PathStep` for good practice.
+        *   Ensured `PathStep.order` is unique per path using `@@unique([pathId, order], name: "pathOrder")`.
+        *   Corrected enum syntax globally in the schema file, which was identified as an issue during `prisma generate`.
+    *   Ran `npx prisma generate` successfully after schema modifications.
+
+2.  **API Route Implementation (`src/app/api/paths/...`):**
+    *   **`/api/paths` (`route.ts`):**
+        *   `GET`: Lists paths for a `userId`. Response includes `totalSteps`, `completedSteps`, and `progressPercentage` for each path.
+        *   `POST`: Creates a new path for a `userId`.
+    *   **`/api/paths/[id]` (`route.ts`):** (`id` is `pathId`)
+        *   `GET`: Fetches a single path with its steps (ordered by `order`), including basic details of linked skills/quests. Response includes progress percentage.
+        *   `PATCH`: Updates path properties (`title`, `description`, `color`).
+        *   `DELETE`: Deletes a path (cascades to steps via schema `onDelete`).
+    *   **`/api/paths/[id]/steps` (`route.ts`):** (`id` is `pathId`)
+        *   `POST`: Adds a new step to a path. Validates existence of `pathId`, and `relatedSkillId`/`relatedQuestId` if provided (ensuring they belong to the same user as the path). Handles potential `order` conflicts (though Prisma's unique constraint provides primary enforcement).
+    *   **`/api/paths/[id]/steps/[stepId]` (`route.ts`):** (`id` is `pathId`)
+        *   `PATCH`: Updates a step's properties (`title`, `description`, `order`, `completed`, `relatedSkillId`, `relatedQuestId`). Manages `completedAt` timestamp when `completed` status changes. Validates new `order` uniqueness if changed. Validates related entities.
+        *   `DELETE`: Deletes a specific step.
+    *   **General:** All routes include basic validation, error handling for Prisma errors (P2025, P2002), and use TypeScript types. User ID for validation of related entities is derived from the parent entity (e.g., Path's `userId` for validating skills/quests linked to its steps).
+
+3.  **Frontend UI Implementation - Paths & Milestones:**
+    *   **`src/components/paths/PathList.tsx`:**
+        *   Fetches and displays paths for a given `userId` (using "demo-user" as placeholder).
+        *   Shows path title, description, and a progress bar (using `progressPercentage`, `totalSteps`, `completedSteps` from API).
+        *   Path cards link to `/paths/[id]`.
+        *   Styled with Tailwind CSS (including `dark:` variants and path `color` for border).
+        *   Uses Framer Motion for list item entrance animation.
+        *   Includes a placeholder "Create New Path" button.
+    *   **`src/components/paths/PathDetailViewer.tsx`:**
+        *   Fetches and displays details for a specific path ID.
+        *   Shows path title, description, and overall progress bar (animated with Framer Motion).
+        *   Lists `PathStep` items, ordered by `order`.
+        *   Each step card displays title, description, completion status (interactive checkbox).
+        *   Toggling step completion calls `PATCH /api/paths/[pathId]/steps/[stepId]` and optimistically updates UI.
+        *   Shows links to related skills/quests if present.
+        *   Includes a form (revealed by button) to add new steps to the current path (calls `POST /api/paths/[pathId]/steps`).
+        *   Styled with Tailwind CSS (including `dark:` variants and path `color`).
+        *   Uses Framer Motion for step list animations and add-step form visibility.
+    *   **Pages:**
+        *   `src/app/paths/page.tsx`: Hosts `PathList`.
+        *   `src/app/paths/[id]/page.tsx`: Hosts `PathDetailViewer`, passing the `pathId` from route params.
+
+**Assumptions & Notes:**
+*   `userId` is passed as a query param or derived for API calls; "demo-user" is used as a placeholder on the frontend.
+*   Step `order` field is managed by the client/API for new steps (e.g., appending or requiring user input for reordering, though full drag-and-drop reordering is a future idea). API validates uniqueness of `order` per path.
+*   Progress calculation is `(completedSteps / totalSteps) * 100`.
+*   Frontend makes direct API calls; a data fetching library like SWR/React Query is not yet implemented.
+*   Styling is functional using Tailwind CSS; further refinement can occur in later UI phases.
+
+**Future Ideas Noted:**
+*   Drag-and-drop reordering for `PathStep` items.
+*   Filtering paths by progress status.
+*   Visual indicators for blocked steps (e.g., if a linked quest is not yet completed).
+*   Auto-syncing `PathStep.completed` status based on linked `Quest.status` or `Skill` level achievement (complex, for future).
+
+**Next Steps:**
+*   Proceed to Phase 3: Achievements & Quests Enhancement.
