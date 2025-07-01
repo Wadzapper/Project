@@ -457,3 +457,77 @@
 
 **Next Steps:**
 *   Proceed with redefined Phase 2.4: Notifications & Smart Suggestions.
+
+---
+## [2024-07-16] Phase 2.4: Notifications & Smart Suggestions
+
+**Date:** (Placeholder - using today's date as example)
+
+**Objective:** Implement backend and frontend for user notifications and conceptualize primitive smart suggestions.
+
+**Actions Taken & Decisions:**
+
+1.  **Prisma Schema Update (`src/prisma/schema.prisma`):**
+    *   Updated the existing `Notification` model to align with prompt requirements:
+        *   Renamed `message` to `body`.
+        *   Renamed `isRead` to `read`.
+        *   Added `relatedId: String?`, `title: String`, `triggerAt: DateTime`.
+        *   Kept `link: String?` for general utility.
+        *   Added `@@index([userId, triggerAt])`.
+    *   The `User.notifications` relation was already present.
+    *   Ran `npx prisma generate` successfully.
+
+2.  **API Route Implementation (`/api/notifications`):**
+    *   **`GET /api/notifications`:** Fetches notifications for a `userId`, supports `read` status filtering, and includes `unreadCount` in the response.
+    *   **`POST /api/notifications`:** Creates a new notification. Requires `userId`, `type`, `title`, `body` (as `notificationBody` in request to avoid conflict), and `triggerAt`.
+    *   **`PATCH /api/notifications/[id]`:** Updates a notification, primarily for marking as `read`, but allows updating other fields like `title`, `body`, `triggerAt`.
+    *   **`DELETE /api/notifications/[id]`:** Deletes a notification.
+    *   Standard error handling and validation included. Placeholder comments for auth checks.
+
+3.  **Frontend Components:**
+    *   **`src/components/notifications/NotificationBell.tsx`:**
+        *   Displays a bell icon and an animated badge with the unread notification count (fetched via `/api/notifications?userId=...&read=false`).
+        *   Accepts an `onClick` prop to trigger display of the notification list.
+        *   Includes loading/error state for the count fetching.
+    *   **`src/components/notifications/NotificationList.tsx`:**
+        *   Fetches and displays a list of notifications for a `userId`.
+        *   Allows filtering by "All" or "Unread".
+        *   Provides buttons to mark individual notifications as read/unread (calls PATCH API) and delete them (calls DELETE API) with optimistic UI updates.
+        *   Includes a "Mark all as read" button (iteratively calls PATCH for now).
+        *   Styled with Tailwind and Framer Motion for list item animations.
+    *   **`src/components/notifications/NotificationCreator.tsx`:**
+        *   A form to schedule manual reminders (`type: 'reminder'`).
+        *   Inputs for title, body, trigger date, and trigger time.
+        *   Client-side validation for required fields and future trigger date/time.
+        *   Calls `POST /api/notifications` on submission.
+        *   Displays success/error messages.
+
+4.  **Page (`src/app/notifications/page.tsx`):**
+    *   Hosts `NotificationList` and `NotificationCreator` components.
+    *   Uses a placeholder `userId` for now.
+    *   Styled with Tailwind and Framer Motion for basic page structure and animations.
+
+5.  **Smart Suggestions (Conceptual):**
+    *   **Decision:** Actual implementation of background jobs (cron) is not feasible in the sandbox.
+    *   **Conceptual Logic Documented:**
+        *   **Quest Overdue Reminder:** If a `Quest` has a `dueDate`, is not `COMPLETED`, and `dueDate` has passed, a system process could generate a `Notification`.
+        *   **Habit Check-in Reminder:** If a `Habit` has not had a `HabitHistory` entry logged for X days, generate a `Notification`.
+        *   **Path Step Stagnation:** If a `PathStep` on an active `Path` has been incomplete for a long duration, suggest focusing on it.
+        *   **Low Engagement with a Skill:** If a `Skill` hasn't seen XP gain or related activity recently, suggest a related learning resource or a simple quest.
+    *   These suggestions would create `Notification` records with appropriate `type`, `relatedId`, `title`, `body`, and `triggerAt`.
+
+6.  **Styling & Build Attempt:**
+    *   New notification components and page styled with Tailwind CSS and Framer Motion, consistent with previous phases.
+    *   **`npx next build` attempt:** Failed with "Module not found" errors for path-aliased components (`@/components/notifications/...`) and `framer-motion`, similar to previous build issues, reinforcing the sandbox environment limitation.
+
+**Assumptions & Notes:**
+*   `userId` is passed via query/body for API calls and placeholder on frontend.
+*   Notification types (`type` field) are flexible strings for now. Could be enums later.
+*   `relatedId` allows linking notifications to specific entities (quests, habits, etc.).
+*   `triggerAt` is essential for scheduled reminders and future-triggered smart suggestions.
+*   The "Smart Suggestions" are purely conceptual for this phase due to environment limitations.
+
+**Next Steps:**
+*   Proceed to Phase 2.5: Quest & Habit Calendar View.
+
+[end of decisions.md]

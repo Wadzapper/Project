@@ -471,16 +471,20 @@ model Session {
 }
 
 model Notification {
-  id          String    @id @default(cuid())
-  userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type        String
-  message     String
-  isRead      Boolean   @default(false)
-  link        String?
-  createdAt   DateTime  @default(now())
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       String   // 'habit' | 'quest' | 'reminder' | 'achievement_unlocked' | 'new_recommendation' etc
+  relatedId  String?  // ID of the related entity (e.g., Quest ID, Habit ID)
+  title      String   // Notification title
+  body       String   // Notification body/message (renamed from message)
+  read       Boolean  @default(false) // Renamed from isRead
+  triggerAt  DateTime // When the notification should be triggered/shown
+  createdAt  DateTime @default(now())
+  link       String?  // Optional: Link to relevant part of the app (kept for utility)
 
-  @@index([userId, isRead])
+  @@index([userId, read])
+  @@index([userId, triggerAt]) // Useful for querying scheduled notifications
 }
 
 model Feedback {
