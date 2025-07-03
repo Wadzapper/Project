@@ -159,6 +159,8 @@ const DashboardScreen = ({ navigation }) => {
       </View>
 
       <View style={styles.buttonGroup}>
+        <Button title="My Quests" onPress={() => navigation.navigate('Quests')} color={colors.primary}/>
+        <View style={styles.buttonSpacer} />
         <Button title="Settings" onPress={() => navigation.navigate('Settings')} color={colors.accent}/>
         <View style={styles.buttonSpacer} />
         <Button title="Logout" onPress={handleLogout} color={colors.error} />
