@@ -2,54 +2,77 @@
 // We'll use React Navigation here later
 // e.g., createStackNavigator, createBottomTabNavigator
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { View, ActivityIndicator } from 'react-native'; // For loading state
 
-// Import screens (will be created later)
+// Import screens
 import AuthScreen from '../screens/AuthScreen';
 import DashboardScreen from '../screens/DashboardScreen';
+import SettingsScreen from '../screens/SettingsScreen';
+import SkillsScreen from '../screens/SkillsScreen';
+import AddSkillScreen from '../screens/AddSkillScreen';
 // import AddTaskScreen from '../screens/AddTaskScreen'; // Will create later
-import SettingsScreen from '../screens/SettingsScreen'; // For theme toggle etc.
 
-// import { Text, View } from 'react-native'; // No longer needed for temp screens
 import { getAppTheme } from '../constants/theme'; // To use theme in navigator
+import { onAuthStateChanged } from '../services/firebaseAuth'; // Import the listener
+import { lightThemeColors, darkThemeColors } from '../constants/colors'; // For loader color
 
 
 const Stack = createNativeStackNavigator();
 
 const AppNavigator = () => {
-  const { isDarkMode, colors } = getAppTheme(); // Get theme for navigator styling
+  const { isDarkMode, colors } = getAppTheme();
+  const [initializing, setInitializing] = useState(true);
+  const [user, setUser] = useState(null);
 
-  // For MVP, let's assume a simple flow: Auth -> Dashboard
-  // We'll add more screens and logic as we build
-  const isAuthenticated = false; // This will come from auth state later
+  // Handle user state changes
+  useEffect(() => {
+    const subscriber = onAuthStateChanged(authUser => {
+      setUser(authUser);
+      if (initializing) {
+        setInitializing(false);
+      }
+    });
+    return subscriber; // Unsubscribe on unmount
+  }, [initializing]); // Only re-run if initializing changes (which is once)
+
+  if (initializing) {
+    // Show a loading screen while checking auth state
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background }}>
+        <ActivityIndicator size="large" color={isDarkMode ? lightThemeColors.primary : darkThemeColors.primary} />
+      </View>
+    );
+  }
 
   return (
     <NavigationContainer>
       <Stack.Navigator
         screenOptions={{
           headerStyle: {
-            backgroundColor: colors.primary, // Use primary color for header
+            backgroundColor: colors.primary,
           },
-          headerTintColor: colors.text, // Text color for header (let's use the theme's main text color for contrast with primary)
-          // headerTintColor: isDarkMode ? darkThemeColors.text : lightThemeColors.text, // Alternative
+          headerTintColor: colors.text,
           headerTitleStyle: {
             fontWeight: 'bold',
           },
           contentStyle: {
-            backgroundColor: colors.background, // Set background for screen content area
+            backgroundColor: colors.background,
           }
         }}
       >
-        {isAuthenticated ? (
+        {user ? ( // If user is logged in
           <>
             <Stack.Screen name="Dashboard" component={DashboardScreen} />
             <Stack.Screen name="Settings" component={SettingsScreen} />
+            <Stack.Screen name="Skills" component={SkillsScreen} options={{ title: 'My Skills' }} />
+            <Stack.Screen name="AddSkill" component={AddSkillScreen} options={{ title: 'Add New Skill' }}/>
             {/* <Stack.Screen name="AddTask" component={AddTaskScreen} /> */}
-            {/* Add other authenticated screens here */}
           </>
         ) : (
+          // No user found, show the auth screen
           <Stack.Screen name="Auth" component={AuthScreen} options={{ headerShown: false }} />
         )}
       </Stack.Navigator>
