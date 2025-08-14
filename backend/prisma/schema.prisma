@@ -1,0 +1,33 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL") // The database URL will be provided by the environment
+}
+
+model Pillar {
+  id     String  @id @default(cuid())
+  name   String
+  skills Skill[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Skill {
+  id     String @id @default(cuid())
+  name   String
+  level  Int    @default(1)
+  xp     Int    @default(0)
+
+  pillar   Pillar @relation(fields: [pillarId], references: [id])
+  pillarId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
