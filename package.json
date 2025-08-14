@@ -1,0 +1,12 @@
+{
+  "name": "gamified-self-improvement",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "frontend": "npm run --workspace=frontend",
+    "backend": "npm run --workspace=backend"
+  }
+}
